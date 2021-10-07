@@ -5,14 +5,14 @@ from neo4j.work import transaction
 from neo4j.io import ClientError
 from web3 import Web3
 from ethereumetl.service.eth_contract_service import EthContractService
-from token_transfer_extractor import EthTokenTransferExtractor
+from ethereumetl.service.token_transfer_extractor import EthTokenTransferExtractor
 
 contract_service = EthContractService()
 token_transfer_service = EthTokenTransferExtractor()
 
 # w3 = Web3(Web3.WebsocketProvider('ws://127.0.0.1:8546'))
 w3 = Web3(Web3.WebsocketProvider('wss://mainnet.infura.io/ws/v3/dc6980e1063b421bbcfef8d7f58ccd43'))
-driver = GraphDatabase.driver("bolt://127.0.0.1:7687", auth=("neo4j", "icaneatglass"))
+driver = GraphDatabase.driver("bolt://127.0.0.1:7687", auth=("neo4j", "123456"))
 
 print('using web3@'+w3.api)
 
@@ -132,13 +132,24 @@ def parse_Transaction(tx, transaction):
         CREATE (from)-[:Send]->(tx)-[:To]->(to)
         """, {'hash':transaction.hash.hex(), 'from': transaction['from'], 'to':transaction['to']})
     else:
-        print('tx {} has no to_addr'.format(transaction.hash.hex()))
         insert_Addr(tx, transaction['from'])
+        new_contract_address = get_new_contract_address(transaction.hash.hex())
+        print('tx {} created a new contract {}'.format(transaction.hash.hex(), new_contract_address))
+        
         tx.run("""
         MATCH (tx:Transaction {hash: $hash}),
             (from:Address {address: $from})
         CREATE (from)-[:Send]->(tx)
         """, {'hash':transaction.hash.hex(), 'from': transaction['from']})
+        tx.run("""
+        MATCH (tx:Transaction {hash: $hash}),
+            (new_contract:Address:Contract {address: $new_contract_address})
+        CREATE (tx)-[:CallContractCreation]->(new_contract)
+        """, {'hash':transaction.hash.hex(), 'new_contract_address': new_contract_address})
+
+def get_new_contract_address(transaction_hash):
+    receipt = w3.eth.getTransactionReceipt(transaction_hash)
+    return receipt.contractAddress # 0xabcd in str
 
 def is_EOA(addr):
     code = w3.eth.getCode(Web3.toChecksumAddress(addr))
@@ -252,7 +263,6 @@ def parse_TokenTransfer(tx, transaction_hash):
     for log in logs:
         transfer = token_transfer_service.extract_transfer_from_log(log)
         if transfer is not None:
-            print('found token transfer')
             insert_TokenTransfer(tx, transfer)
 
 

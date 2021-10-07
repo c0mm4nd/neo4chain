@@ -6,11 +6,13 @@ Neo4j ETL for Ethereum network data
 
 Neo4j >= v4.4
 
-Python 3.8 (dep has bug on 3.9)
+Python 3.9
 
 ## Usage
 
-Edit and Run `main.py`
+Install deps: `pip3 install -r requirements.txt`
+
+Run `__main__.py`
 
 ## TODO
 

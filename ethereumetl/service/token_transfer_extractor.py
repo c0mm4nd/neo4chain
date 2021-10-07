@@ -23,8 +23,6 @@
 
 from hexbytes.main import HexBytes
 from ethereumetl.utils import chunk_string, hex_to_dec, to_normalized_address
-from ethereumetl.service.token_transfer_extractor import split_to_words, word_to_address
-from ethereumetl.domain.token_transfer import EthTokenTransfer
 from builtins import map
 import logging
 
@@ -33,6 +31,15 @@ import logging
 TRANSFER_EVENT_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 logger = logging.getLogger(__name__)
 
+class EthTokenTransfer(object):
+    def __init__(self):
+        self.token_address = None
+        self.from_address = None
+        self.to_address = None
+        self.value = None
+        self.transaction_hash = None
+        self.log_index = None
+        self.block_number = None
 
 class EthTokenTransferExtractor(object):
     def extract_transfer_from_log(self, receipt_log):
