@@ -67,8 +67,8 @@ class EthTokenTransferExtractor(object):
 
         # if the number of topics and fields in data part != 4, then it's a weird event
         if len(topics_with_data) != 4:
-            logger.warning("The number of topics and data parts is not equal to 4 in log {} of transaction {}"
-                           .format(log_index, transaction_hash))
+            # logger.warning("The number of topics and data parts is not equal to 4 in log {} of transaction {}"
+            #                .format(log_index, transaction_hash))
             return None
 
         token_transfer = EthTokenTransfer()
