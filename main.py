@@ -84,7 +84,7 @@ def parse_Block(block):
             (b:Block {number: $number}),
             (addr:Address:EOA {address: $miner_addr})
         CREATE (b)-[:BlockReward]->(addr)
-        """, number=block.number, miner_addr=block.miner)
+        """, number=block.number, miner_addr=block.miner) # TODO: BlockReward value
 
         # https://www.investopedia.com/terms/u/uncle-block-cryptocurrency.asp
         # Only one can enter the ledger as a block, and the other does not
@@ -95,7 +95,7 @@ def parse_Block(block):
                 (b:Block {number: $number}),
                 (addr:Address:EOA {address: $miner_addr})
             CREATE (b)-[:UncleReward]->(addr)
-            """, number=block.number, miner_addr=uncle_block.miner)
+            """, number=block.number, miner_addr=uncle_block.miner) # TODO: UncleReward value
 
         for transaction_hash in block.transactions:
             if type(transaction_hash) is HexBytes:

@@ -16,6 +16,7 @@ Edit and Run `main.py`
 
 - fix bugs on ERC20/721 detection
 - workflow for dailiy update
+- Block/UncleReward value
 
 ## Thanks and some code copyleft
 
