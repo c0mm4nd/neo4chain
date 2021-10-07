@@ -17,8 +17,8 @@ Run `__main__.py`
 ## TODO
 
 - fix bugs on ERC20/721 detection
-- workflow for dailiy update
 - Block/UncleReward value
+- Support Multithreads/Coroutines
 
 ## FAQ
 
