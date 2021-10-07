@@ -11,14 +11,18 @@ contract_service = EthContractService()
 token_transfer_service = EthTokenTransferExtractor()
 
 # w3 = Web3(Web3.WebsocketProvider('ws://127.0.0.1:8546'))
-w3 = Web3(Web3.WebsocketProvider('wss://mainnet.infura.io/ws/v3/dc6980e1063b421bbcfef8d7f58ccd43'))
-driver = GraphDatabase.driver("bolt://127.0.0.1:7687", auth=("neo4j", "123456"))
+w3 = Web3(Web3.WebsocketProvider(
+    'wss://mainnet.infura.io/ws/v3/dc6980e1063b421bbcfef8d7f58ccd43'))
+driver = GraphDatabase.driver(
+    "bolt://127.0.0.1:7687", auth=("neo4j", "123456"))
 
 print('using web3@'+w3.api)
+
 
 def drop_db():
     system = driver.session()
     system.run("DROP DATABASE ethereum")
+
 
 def create_db():
     system = driver.session()
@@ -32,12 +36,13 @@ def create_db():
     db.run("CREATE CONSTRAINT tx_hash_uq ON (tx:Transaction) ASSERT tx.hash IS UNIQUE")
     db.run("CREATE CONSTRAINT tf_hash_idx_uq ON (tx:TokenTransfer) ASSERT tx.hash_idx IS UNIQUE")
     db.close()
-    
-    #Unique Constraint is already indexed
+
+    # Unique Constraint is already indexed
     # system.run("CREATE index block_hash_idx FOR (block:Block) ON (block.hash)")
     # system.run("CREATE index block_number_idx FOR (block:Block) ON (block.number)")
     # system.run("CREATE index addr_idx FOR (addr:Address) ON (addr.address)")
     # system.run("CREATE index tx_hash_idx FOR (tx:Transaction) ON (tx.hash)")
+
 
 db = driver.session(database="ethereum")
 try:
@@ -50,6 +55,8 @@ except ClientError as e:
         raise e
 
 # %%
+
+
 def parse_Block(block):
     with db.begin_transaction() as tx:
         tx.run("""
@@ -64,18 +71,18 @@ def parse_Block(block):
             gasLimit: $gasLimit,
             gasUsed: $gasUsed
         }) return b
-        """, 
-        number=block.number, 
-        hash=block.hash.hex(),
-        timestamp=block.timestamp, 
-        size=block.size, 
-        nonce=block.nonce.hex(), 
-        difficulty=str(block.difficulty), 
-        totalDifficulty=str(block.totalDifficulty), 
-        gasLimit=str(block.gasLimit),
-        gasUsed=str(block.gasUsed))
+        """,
+               number=block.number,
+               hash=block.hash.hex(),
+               timestamp=block.timestamp,
+               size=block.size,
+               nonce=block.nonce.hex(),
+               difficulty=str(block.difficulty),
+               totalDifficulty=str(block.totalDifficulty),
+               gasLimit=str(block.gasLimit),
+               gasUsed=str(block.gasUsed))
 
-        # miner must be an EOA 
+        # miner must be an EOA
         insert_EOA(tx, block.miner)
 
         # todo: add reward amount into the reward relationships
@@ -84,7 +91,7 @@ def parse_Block(block):
             (b:Block {number: $number}),
             (addr:Address:EOA {address: $miner_addr})
         CREATE (b)-[:BlockReward]->(addr)
-        """, number=block.number, miner_addr=block.miner) # TODO: BlockReward value
+        """, number=block.number, miner_addr=block.miner)  # TODO: BlockReward value
 
         # https://www.investopedia.com/terms/u/uncle-block-cryptocurrency.asp
         # Only one can enter the ledger as a block, and the other does not
@@ -95,7 +102,7 @@ def parse_Block(block):
                 (b:Block {number: $number}),
                 (addr:Address:EOA {address: $miner_addr})
             CREATE (b)-[:UncleReward]->(addr)
-            """, number=block.number, miner_addr=uncle_block.miner) # TODO: UncleReward value
+            """, number=block.number, miner_addr=uncle_block.miner)  # TODO: UncleReward value
 
         for transaction_hash in block.transactions:
             if type(transaction_hash) is HexBytes:
@@ -118,6 +125,7 @@ def parse_Block(block):
             CREATE (b)-[:Contains]->(tx)
             """, number=block.number, hash=transaction_hash)
 
+
 def parse_Transaction(tx, transaction):
     insert_Transaction(tx, transaction)
 
@@ -130,46 +138,55 @@ def parse_Transaction(tx, transaction):
             (from:Address {address: $from}),
             (to:Address {address: $to})
         CREATE (from)-[:Send]->(tx)-[:To]->(to)
-        """, {'hash':transaction.hash.hex(), 'from': transaction['from'], 'to':transaction['to']})
+        """, {'hash': transaction.hash.hex(), 'from': transaction['from'], 'to': transaction['to']})
     else:
         insert_Addr(tx, transaction['from'])
         new_contract_address = get_new_contract_address(transaction.hash.hex())
-        print('tx {} created a new contract {}'.format(transaction.hash.hex(), new_contract_address))
-        
+        assert type(new_contract_address) == str and len(
+            new_contract_address) > 0
+        print('tx {} created a new contract {}'.format(
+            transaction.hash.hex(), new_contract_address))
+
         tx.run("""
         MATCH (tx:Transaction {hash: $hash}),
             (from:Address {address: $from})
         CREATE (from)-[:Send]->(tx)
-        """, {'hash':transaction.hash.hex(), 'from': transaction['from']})
+        """, {'hash': transaction.hash.hex(), 'from': transaction['from']})
         tx.run("""
         MATCH (tx:Transaction {hash: $hash}),
             (new_contract:Address:Contract {address: $new_contract_address})
         CREATE (tx)-[:CallContractCreation]->(new_contract)
-        """, {'hash':transaction.hash.hex(), 'new_contract_address': new_contract_address})
+        """, {'hash': transaction.hash.hex(), 'new_contract_address': new_contract_address})
+
 
 def get_new_contract_address(transaction_hash):
     receipt = w3.eth.getTransactionReceipt(transaction_hash)
-    return receipt.contractAddress # 0xabcd in str
+    return receipt.contractAddress  # 0xabcd in str
+
 
 def is_EOA(addr):
     code = w3.eth.getCode(Web3.toChecksumAddress(addr))
     return code == HexBytes('0x')
+
 
 def insert_EOA(tx, addr):
     # todo: in tx
     query = "MERGE (a:Address:EOA{address: $address})"
     tx.run(query, address=addr)
 
+
 def is_ERC20(bytecode):
-    # contains bug here 
+    # contains bug here
     # https://github.com/blockchain-etl/ethereum-etl/issues/194
     # https://github.com/blockchain-etl/ethereum-etl/issues/195
     function_sighashes = contract_service.get_function_sighashes(bytecode)
     return contract_service.is_erc20_contract(function_sighashes)
 
+
 def is_ERC721(bytecode):
     function_sighashes = contract_service.get_function_sighashes(bytecode)
     return contract_service.is_erc721_contract(function_sighashes)
+
 
 def insert_Contract(tx, addr):
     # todo: in tx
@@ -181,17 +198,20 @@ def insert_Contract(tx, addr):
     })
     """
     bytecode = w3.eth.getCode(Web3.toChecksumAddress(addr)).hex()
-    tx.run(query, address=addr, is_erc20=is_ERC20(bytecode), is_erc721=is_ERC721(bytecode))
+    tx.run(query, address=addr, is_erc20=is_ERC20(
+        bytecode), is_erc721=is_ERC721(bytecode))
+
 
 def insert_Addr(tx, addr):
     if addr is None:
         raise ValueError("Address is None")
     if type(addr) is HexBytes:
-        addr = addr.hex() 
+        addr = addr.hex()
     if is_EOA(addr):
         insert_EOA(tx, addr)
     else:
         insert_Contract(tx, addr)
+
 
 def insert_Transaction(tx, transaction):
     # todo: in tx
@@ -211,7 +231,7 @@ def insert_Transaction(tx, transaction):
         gasPrice: $gasPrice
     }) 
     """, {
-        'hash':transaction.hash.hex(),
+        'hash': transaction.hash.hex(),
         'from': transaction['from'],
         'to': transaction['to'],
         'value': str(transaction['value']),
@@ -223,6 +243,7 @@ def insert_Transaction(tx, transaction):
         'type': transaction['type'],
         'gas': str(transaction['gas']),
         'gasPrice': str(transaction['gasPrice'])})
+
 
 def insert_TokenTransfer(tx, transfer):
     # define hash_idx
@@ -237,8 +258,8 @@ def insert_TokenTransfer(tx, transfer):
         value: $value
     })
     """, hash_idx=hash_idx,
-    token_addr=transfer.token_address, # do not add (Contract)-[handles]->[TokenTransfer] to avoid 1-INF too heavy relationship
-    value=str(transfer.value))
+           token_addr=transfer.token_address,  # do not add (Contract)-[handles]->[TokenTransfer] to avoid 1-INF too heavy relationship
+           value=str(transfer.value))
 
     for addr in (transfer.from_address, transfer.to_address):
         insert_Addr(tx, addr)
@@ -255,7 +276,8 @@ def insert_TokenTransfer(tx, transfer):
         MATCH (tf:TokenTransfer {hash_idx: $hash_idx}),
             (tx:Transaction {hash: $hash})
         CREATE (tx)-[:CallTokenTransfer]->(tf)
-        """, hash_idx= hash_idx, hash=transfer.transaction_hash)
+        """, hash_idx=hash_idx, hash=transfer.transaction_hash)
+
 
 def parse_TokenTransfer(tx, transaction_hash):
     # load token transfer from receipt logs
@@ -266,7 +288,7 @@ def parse_TokenTransfer(tx, transaction_hash):
             insert_TokenTransfer(tx, transfer)
 
 
-# %% 
+# %%
 def get_local_height():
     results = db.run("MATCH (b:Block) RETURN max(b.number);").value()
     if results is None:
@@ -274,19 +296,21 @@ def get_local_height():
     else:
         return results[0]
 
+
 def work_flow():
     latest = w3.eth.getBlock('latest')
-    while get_local_height()<latest:
+    while get_local_height() < latest:
         height = get_local_height() + 1
         block = w3.eth.getBlock(height)
         parse_Block(block)
 
-    while get_local_height()<w3.eth.getBlock('latest'):
+    while get_local_height() < w3.eth.getBlock('latest'):
         height = get_local_height() + 1
         block = w3.eth.getBlock(height)
         parse_Block(block)
 
 # %%
+
 
 for block in range(2000100, 2000200):
     block = w3.eth.getBlock(block)

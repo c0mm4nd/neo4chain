@@ -20,6 +20,13 @@ Run `__main__.py`
 - workflow for dailiy update
 - Block/UncleReward value
 
+## FAQ
+
+> invalid instruction: PUSHXX
+
+please ignore the warnning message 
+https://github.com/blockchain-etl/ethereum-etl/issues/143#issuecomment-454787516
+
 ## Thanks and some code copyleft
 
 [ethereum-etl](https://github.com/blockchain-etl/ethereum-etl)
