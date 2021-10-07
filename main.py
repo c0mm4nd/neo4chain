@@ -225,8 +225,8 @@ def insert_TokenTransfer(tx, transfer):
         token_address: $token_addr,         
         value: $value
     })
-    """, hash_idx=hash_idx, 
-    token_addr=transfer.token_address, 
+    """, hash_idx=hash_idx,
+    token_addr=transfer.token_address, # do not add (Contract)-[handles]->[TokenTransfer] to avoid 1-INF too heavy relationship
     value=str(transfer.value))
 
     for addr in (transfer.from_address, transfer.to_address):
