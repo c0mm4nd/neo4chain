@@ -292,30 +292,40 @@ def parse_TokenTransfer(tx, transaction_hash):
 
 
 # %%
-def get_local_height():
+def get_local_block_height():
     results = db.run("MATCH (b:Block) RETURN max(b.number);").value()
     if results is None:
         return -1
     else:
         return results[0]
 
+def get_local_block_timestamp():
+    results = db.run("MATCH (b:Block) RETURN max(b.timestamp);").value()
+    if results is None:
+        return -1
+    else:
+        return results[0]
 
 def work_flow():
     latest = w3.eth.getBlock('latest').number
-    while get_local_height() < latest-1000:
-        height = get_local_height() + 1
-        block = w3.eth.getBlock(height)
+    local_height = get_local_block_height()
+    while local_height < latest-1000:
+        local_height += 1
+        block = w3.eth.getBlock(local_height)
         parse_Block(block)
-        logger.warning(f'{height}/{latest}')
+        logger.warning(f'{local_height}/{latest}')
 
     while True:
-        if int(time.time()) % (60*60*24) == 0:
-            latest = w3.eth.getBlock('latest').number
-            while get_local_height() < latest-1000:
-                height = get_local_height() + 1
-                block = w3.eth.getBlock(height)
-                parse_Block(block)
-                logger.warning(f'{height}/{latest}')
+        latest = w3.eth.getBlock('latest').number
+        local_timestamp = get_local_block_timestamp()
+        while True:
+            local_height += 1
+            block = w3.eth.getBlock(local_height)
+            if block.timestamp - local_timestamp < 60*60*24:
+                break 
+            parse_Block(block)
+            logger.warning(f'{local_height}/{latest}')
+        time.sleep(60*60*24) # every day
             
 
 # %%
