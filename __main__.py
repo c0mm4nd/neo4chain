@@ -1,11 +1,14 @@
 # %%
 from hexbytes.main import HexBytes
 from neo4j import GraphDatabase
-from neo4j.work import transaction
 from neo4j.io import ClientError
 from web3 import Web3
 from ethereumetl.service.eth_contract_service import EthContractService
 from ethereumetl.service.token_transfer_extractor import EthTokenTransferExtractor
+import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 contract_service = EthContractService()
 token_transfer_service = EthTokenTransferExtractor()
@@ -16,7 +19,7 @@ w3 = Web3(Web3.WebsocketProvider(
 driver = GraphDatabase.driver(
     "bolt://127.0.0.1:7687", auth=("neo4j", "123456"))
 
-print('using web3@'+w3.api)
+logger.warning('using web3@'+w3.api)
 
 
 def drop_db():
@@ -144,7 +147,7 @@ def parse_Transaction(tx, transaction):
         new_contract_address = get_new_contract_address(transaction.hash.hex())
         assert type(new_contract_address) == str and len(
             new_contract_address) > 0
-        print('tx {} created a new contract {}'.format(
+        logger.info('tx {} created a new contract {}'.format(
             transaction.hash.hex(), new_contract_address))
 
         tx.run("""
@@ -298,23 +301,25 @@ def get_local_height():
 
 
 def work_flow():
-    latest = w3.eth.getBlock('latest')
-    while get_local_height() < latest:
+    latest = w3.eth.getBlock('latest').number
+    while get_local_height() < latest-1000:
         height = get_local_height() + 1
         block = w3.eth.getBlock(height)
         parse_Block(block)
+        logger.warning(f'{height}/{latest}')
 
-    while get_local_height() < w3.eth.getBlock('latest'):
-        height = get_local_height() + 1
-        block = w3.eth.getBlock(height)
-        parse_Block(block)
+    while True:
+        if int(time.time()) % (60*60*24) == 0:
+            latest = w3.eth.getBlock('latest').number
+            while get_local_height() < latest-1000:
+                height = get_local_height() + 1
+                block = w3.eth.getBlock(height)
+                parse_Block(block)
+                logger.warning(f'{height}/{latest}')
+            
 
 # %%
 
 
-for block in range(2000100, 2000200):
-    block = w3.eth.getBlock(block)
-    parse_Block(block)
-    print(block.number)
-
-# %%
+if __name__ == '__main__':
+    work_flow()
