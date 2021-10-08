@@ -27,6 +27,10 @@ Run `__main__.py`
 please ignore the warnning message 
 https://github.com/blockchain-etl/ethereum-etl/issues/143#issuecomment-454787516
 
+## Graph
+
+![](graph.png)
+
 ## Thanks and some code copyleft
 
 [ethereum-etl](https://github.com/blockchain-etl/ethereum-etl)
