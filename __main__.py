@@ -147,6 +147,7 @@ def parse_Transaction(tx, transaction):
         new_contract_address = get_new_contract_address(transaction.hash.hex())
         assert type(new_contract_address) == str and len(
             new_contract_address) > 0
+        insert_Addr(tx, new_contract_address)
         logger.info('tx {} created a new contract {}'.format(
             transaction.hash.hex(), new_contract_address))
 
@@ -294,14 +295,14 @@ def parse_TokenTransfer(tx, transaction_hash):
 # %%
 def get_local_block_height():
     results = db.run("MATCH (b:Block) RETURN max(b.number);").value()
-    if results is None:
+    if results[0] is None:
         return -1
     else:
         return results[0]
 
 def get_local_block_timestamp():
     results = db.run("MATCH (b:Block) RETURN max(b.timestamp);").value()
-    if results is None:
+    if results[0] is None:
         return -1
     else:
         return results[0]
