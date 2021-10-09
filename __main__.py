@@ -143,7 +143,7 @@ def parse_Transaction(tx, transaction):
         CREATE (from)-[:SEND]->(tx)-[:TO]->(to)
         """, {'hash': transaction.hash.hex(), 'from': transaction['from'], 'to': transaction['to']})
     else:
-        insert_Addr(tx, transaction['FROM'])
+        insert_Addr(tx, transaction['from'])
         new_contract_address = get_new_contract_address(transaction.hash.hex())
         assert type(new_contract_address) == str and len(
             new_contract_address) > 0
