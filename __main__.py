@@ -93,7 +93,7 @@ def parse_Block(block):
         MATCH 
             (b:Block {number: $number}),
             (addr:Address:EOA {address: $miner_addr})
-        CREATE (b)-[:BlockReward]->(addr)
+        CREATE (b)-[:BLOCK_REWARD]->(addr)
         """, number=block.number, miner_addr=block.miner)  # TODO: BlockReward value
 
         # https://www.investopedia.com/terms/u/uncle-block-cryptocurrency.asp
@@ -104,7 +104,7 @@ def parse_Block(block):
             MATCH 
                 (b:Block {number: $number}),
                 (addr:Address:EOA {address: $miner_addr})
-            CREATE (b)-[:UncleReward]->(addr)
+            CREATE (b)-[:UNCLE_REWARD]->(addr)
             """, number=block.number, miner_addr=uncle_block.miner)  # TODO: UncleReward value
 
         for transaction_hash in block.transactions:
@@ -125,7 +125,7 @@ def parse_Block(block):
             MATCH 
                 (b:Block {number: $number}),
                 (tx:Transaction {hash: $hash})
-            CREATE (b)-[:Contains]->(tx)
+            CREATE (b)-[:CONTAINS]->(tx)
             """, number=block.number, hash=transaction_hash)
 
 
@@ -140,10 +140,10 @@ def parse_Transaction(tx, transaction):
         MATCH (tx:Transaction {hash: $hash}),
             (from:Address {address: $from}),
             (to:Address {address: $to})
-        CREATE (from)-[:Send]->(tx)-[:To]->(to)
+        CREATE (from)-[:SEND]->(tx)-[:TO]->(to)
         """, {'hash': transaction.hash.hex(), 'from': transaction['from'], 'to': transaction['to']})
     else:
-        insert_Addr(tx, transaction['from'])
+        insert_Addr(tx, transaction['FROM'])
         new_contract_address = get_new_contract_address(transaction.hash.hex())
         assert type(new_contract_address) == str and len(
             new_contract_address) > 0
@@ -154,13 +154,8 @@ def parse_Transaction(tx, transaction):
         tx.run("""
         MATCH (tx:Transaction {hash: $hash}),
             (from:Address {address: $from})
-        CREATE (from)-[:Send]->(tx)
-        """, {'hash': transaction.hash.hex(), 'from': transaction['from']})
-        tx.run("""
-        MATCH (tx:Transaction {hash: $hash}),
-            (new_contract:Address:Contract {address: $new_contract_address})
-        CREATE (tx)-[:CallContractCreation]->(new_contract)
-        """, {'hash': transaction.hash.hex(), 'new_contract_address': new_contract_address})
+        CREATE (from)-[:SEND]->(tx)-[:CALL_CONTRACT_CREATION]->(new_contract)
+        """, {'hash': transaction.hash.hex(), 'from': transaction['from'], 'new_contract_address': new_contract_address})
 
 
 def get_new_contract_address(transaction_hash):
@@ -219,6 +214,10 @@ def insert_Addr(tx, addr):
 
 def insert_Transaction(tx, transaction):
     # todo: in tx
+    if type(transaction['transactionIndex']) is str and transaction['transactionIndex'].startswith('0x'):
+        transaction['transactionIndex'] = int(
+            transaction['transactionIndex'][2:], 16)
+
     tx.run("""
     CREATE (tx:Transaction {
         hash: $hash,
@@ -230,7 +229,7 @@ def insert_Transaction(tx, transaction):
         r: $r,
         s: $s,
         v: $v,
-        type: $type,
+        transactionIndex: $transactionIndex,
         gas: $gas,
         gasPrice: $gasPrice
     }) 
@@ -244,7 +243,8 @@ def insert_Transaction(tx, transaction):
         'r': transaction['r'].hex(),
         's': transaction['s'].hex(),
         'v': transaction['v'],
-        'type': transaction['type'],
+        'transactionIndex': transaction['transactionIndex'],
+        # 'type': transaction['type'], cannot get type from openethereum, and not officially supported https://eth.wiki/json-rpc/API
         'gas': str(transaction['gas']),
         'gasPrice': str(transaction['gasPrice'])})
 
@@ -273,13 +273,13 @@ def insert_TokenTransfer(tx, transfer):
         MATCH (tf:TokenTransfer {hash_idx: $hash_idx}),
             (from:Address {address: $from}),
             (to:Address {address: $to})
-        CREATE (from)-[:SendToken]->(tf)-[:TokenTo]->(to)
+        CREATE (from)-[:SEND_TOKEN]->(tf)-[:TOKEN_TO]->(to)
         """, {'hash_idx': hash_idx, 'from': transfer.from_address, 'to': transfer.to_address})
     # add tx_hash replationships
     tx.run("""
         MATCH (tf:TokenTransfer {hash_idx: $hash_idx}),
             (tx:Transaction {hash: $hash})
-        CREATE (tx)-[:CallTokenTransfer]->(tf)
+        CREATE (tx)-[:CALL_TOKEN_TRANSFER]->(tf)
         """, hash_idx=hash_idx, hash=transfer.transaction_hash)
 
 
@@ -300,12 +300,14 @@ def get_local_block_height():
     else:
         return results[0]
 
+
 def get_local_block_timestamp():
     results = db.run("MATCH (b:Block) RETURN max(b.timestamp);").value()
     if results[0] is None:
         return -1
     else:
         return results[0]
+
 
 def work_flow():
     latest = w3.eth.getBlock('latest').number
@@ -323,11 +325,11 @@ def work_flow():
             local_height += 1
             block = w3.eth.getBlock(local_height)
             if block.timestamp - local_timestamp < 60*60*24:
-                break 
+                break
             parse_Block(block)
             logger.warning(f'{local_height}/{latest}')
-        time.sleep(60*60*24) # every day
-            
+        time.sleep(60*60*24)  # every day
+
 
 # %%
 
