@@ -5,6 +5,7 @@ from neo4j.io import ClientError
 from web3 import Web3
 from ethereumetl.service.eth_contract_service import EthContractService
 from ethereumetl.service.token_transfer_extractor import EthTokenTransferExtractor
+import asyncio
 import time
 import logging
 
@@ -300,15 +301,20 @@ def get_local_block_timestamp():
     else:
         return results[0]
 
+async def task_with_log(height, latest):
+    parse_Block(block = w3.eth.getBlock(height))
+    logger.warning(f'{height}/{latest}')
 
-def work_flow():
+async def work_flow():
     latest = w3.eth.getBlock('latest').number
     local_height = get_local_block_height()
+
+    co = 10
+    
     while local_height < latest-1000:
-        local_height += 1
-        block = w3.eth.getBlock(local_height)
-        parse_Block(block)
-        logger.warning(f'{local_height}/{latest}')
+        tasks = [task_with_log(local_height+i+1, latest) for i in range(co)]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        local_height += co
 
     while True:
         latest = w3.eth.getBlock('latest').number
@@ -327,4 +333,4 @@ def work_flow():
 
 
 if __name__ == '__main__':
-    work_flow()
+    asyncio.run(work_flow())
