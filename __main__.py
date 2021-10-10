@@ -86,13 +86,13 @@ def parse_Block(block):
                gasUsed=str(block.gasUsed))
 
         # miner must be an EOA
-        insert_EOA(tx, block.miner)
+        insert_Address(tx, block.miner)
 
         # todo: add reward amount into the reward relationships
         tx.run("""
         MATCH 
             (b:Block {number: $number}),
-            (addr:Address:EOA {address: $miner_addr})
+            (addr:Address {address: $miner_addr})
         CREATE (b)-[:BLOCK_REWARD]->(addr)
         """, number=block.number, miner_addr=block.miner)  # TODO: BlockReward value
 
@@ -103,7 +103,7 @@ def parse_Block(block):
             tx.run("""
             MATCH 
                 (b:Block {number: $number}),
-                (addr:Address:EOA {address: $miner_addr})
+                (addr:Address {address: $miner_addr})
             CREATE (b)-[:UNCLE_REWARD]->(addr)
             """, number=block.number, miner_addr=uncle_block.miner)  # TODO: UncleReward value
 
@@ -134,7 +134,7 @@ def parse_Transaction(tx, transaction):
 
     if transaction.to != None:
         for addr in (transaction['from'], transaction['to']):
-            insert_Addr(tx, addr)
+            insert_Address(tx, addr)
         # insert relationships
         tx.run("""
         MATCH (tx:Transaction {hash: $hash}),
@@ -143,11 +143,11 @@ def parse_Transaction(tx, transaction):
         CREATE (from)-[:SEND]->(tx)-[:TO]->(to)
         """, {'hash': transaction.hash.hex(), 'from': transaction['from'], 'to': transaction['to']})
     else:
-        insert_Addr(tx, transaction['from'])
+        insert_Address(tx, transaction['from'])
         new_contract_address = get_new_contract_address(transaction.hash.hex())
         assert type(new_contract_address) == str and len(
             new_contract_address) > 0
-        insert_Addr(tx, new_contract_address)
+        insert_Contract(tx, new_contract_address)
         logger.info('tx {} created a new contract {}'.format(
             transaction.hash.hex(), new_contract_address))
 
@@ -163,15 +163,14 @@ def get_new_contract_address(transaction_hash):
     return receipt.contractAddress  # 0xabcd in str
 
 
-def is_EOA(addr):
-    code = w3.eth.getCode(Web3.toChecksumAddress(addr))
-    return code == HexBytes('0x')
+# def is_EOA(addr):
+#     code = w3.eth.getCode(Web3.toChecksumAddress(addr))
+#     return code == HexBytes('0x')
 
 
-def insert_EOA(tx, addr):
-    # todo: in tx
-    query = "MERGE (a:Address:EOA{address: $address})"
-    tx.run(query, address=addr)
+# def insert_EOA(tx, addr):
+#     query = "MERGE (a:Address:EOA {address: $address})"
+#     tx.run(query, address=addr)
 
 
 def is_ERC20(bytecode):
@@ -188,7 +187,8 @@ def is_ERC721(bytecode):
 
 
 def insert_Contract(tx, addr):
-    # todo: in tx
+    if type(addr) is HexBytes:
+        addr = addr.hex()
     query = """
     MERGE (a:Address:Contract{
         address: $address, 
@@ -201,15 +201,11 @@ def insert_Contract(tx, addr):
         bytecode), is_erc721=is_ERC721(bytecode))
 
 
-def insert_Addr(tx, addr):
-    if addr is None:
-        raise ValueError("Address is None")
+def insert_Address(tx, addr):
     if type(addr) is HexBytes:
         addr = addr.hex()
-    if is_EOA(addr):
-        insert_EOA(tx, addr)
-    else:
-        insert_Contract(tx, addr)
+    query = "MERGE (a:Address {address: $address})"
+    tx.run(query, address=addr)
 
 
 def insert_Transaction(tx, transaction):
@@ -266,7 +262,7 @@ def insert_TokenTransfer(tx, transfer):
            value=str(transfer.value))
 
     for addr in (transfer.from_address, transfer.to_address):
-        insert_Addr(tx, addr)
+        insert_Address(tx, addr)
 
     # add from replationships & add to replationships
     tx.run("""
