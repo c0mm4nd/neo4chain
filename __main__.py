@@ -86,7 +86,7 @@ def parse_Block(block):
                gasUsed=str(block.gasUsed))
 
         # miner must be an EOA
-        insert_Address(tx, block.miner)
+        insert_EOA(tx, block.miner)
 
         # todo: add reward amount into the reward relationships
         tx.run("""
@@ -133,8 +133,8 @@ def parse_Transaction(tx, transaction):
     insert_Transaction(tx, transaction)
 
     if transaction.to != None:
-        for addr in (transaction['from'], transaction['to']):
-            insert_Address(tx, addr)
+        insert_Address(tx, transaction['to']) # to is unknown
+        insert_EOA(tx, transaction['from']) # from must be an EOA
         # insert relationships
         tx.run("""
         MATCH (tx:Transaction {hash: $hash}),
@@ -143,7 +143,7 @@ def parse_Transaction(tx, transaction):
         CREATE (from)-[:SEND]->(tx)-[:TO]->(to)
         """, {'hash': transaction.hash.hex(), 'from': transaction['from'], 'to': transaction['to']})
     else:
-        insert_Address(tx, transaction['from'])
+        insert_EOA(tx, transaction['from'])
         new_contract_address = get_new_contract_address(transaction.hash.hex())
         assert type(new_contract_address) == str and len(
             new_contract_address) > 0
@@ -190,8 +190,9 @@ def insert_Contract(tx, addr):
     if type(addr) is HexBytes:
         addr = addr.hex()
     query = """
-    MERGE (a:Address:Contract{
-        address: $address, 
+    MERGE (a:Address {
+        address: $address,
+        type: 2, 
         is_erc20:$is_erc20,
         is_erc721:$is_erc721
     })
@@ -199,6 +200,15 @@ def insert_Contract(tx, addr):
     bytecode = w3.eth.getCode(Web3.toChecksumAddress(addr)).hex()
     tx.run(query, address=addr, is_erc20=is_ERC20(
         bytecode), is_erc721=is_ERC721(bytecode))
+
+
+def insert_EOA(tx, addr):
+    if type(addr) is HexBytes:
+        addr = addr.hex()
+    tx.run("""MERGE (a:Address {
+        address: $address,
+        type: 1
+    })""", address=addr)
 
 
 def insert_Address(tx, addr):
