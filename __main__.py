@@ -133,8 +133,8 @@ def parse_Transaction(tx, transaction):
     insert_Transaction(tx, transaction)
 
     if transaction.to != None:
-        insert_Address(tx, transaction['to']) # to is unknown
-        insert_EOA(tx, transaction['from']) # from must be an EOA
+        insert_Address(tx, transaction['to'])  # to is unknown
+        insert_EOA(tx, transaction['from'])  # from must be an EOA
         # insert relationships
         tx.run("""
         MATCH (tx:Transaction {hash: $hash}),
@@ -163,16 +163,6 @@ def get_new_contract_address(transaction_hash):
     return receipt.contractAddress  # 0xabcd in str
 
 
-# def is_EOA(addr):
-#     code = w3.eth.getCode(Web3.toChecksumAddress(addr))
-#     return code == HexBytes('0x')
-
-
-# def insert_EOA(tx, addr):
-#     query = "MERGE (a:Address:EOA {address: $address})"
-#     tx.run(query, address=addr)
-
-
 def is_ERC20(bytecode):
     # contains bug here
     # https://github.com/blockchain-etl/ethereum-etl/issues/194
@@ -190,12 +180,8 @@ def insert_Contract(tx, addr):
     if type(addr) is HexBytes:
         addr = addr.hex()
     query = """
-    MERGE (a:Address {
-        address: $address,
-        type: 2, 
-        is_erc20:$is_erc20,
-        is_erc721:$is_erc721
-    })
+    MERGE (a:Address {address: $address})
+    set a.type = 2, a.is_erc20=$is_erc20, a.is_erc721=$is_erc721
     """
     bytecode = w3.eth.getCode(Web3.toChecksumAddress(addr)).hex()
     tx.run(query, address=addr, is_erc20=is_ERC20(
@@ -205,10 +191,10 @@ def insert_Contract(tx, addr):
 def insert_EOA(tx, addr):
     if type(addr) is HexBytes:
         addr = addr.hex()
-    tx.run("""MERGE (a:Address {
-        address: $address,
-        type: 1
-    })""", address=addr)
+    tx.run("""
+    MERGE (a:Address {address: $address})
+    set a.type = 1
+    """, address=addr)
 
 
 def insert_Address(tx, addr):
