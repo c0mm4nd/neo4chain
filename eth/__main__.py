@@ -295,7 +295,7 @@ def get_local_block_height():
 
 
 def get_local_block_timestamp():
-    results = db.run("MATCH (b:Block) RETURN max(b.timestamp);").value()
+    results = db.run("MATCH (b:Block) with max(b.number) as top match (b:Block) where b.number = top return b.timestamp;").value()
     if results[0] is None:
         return -1
     else:
