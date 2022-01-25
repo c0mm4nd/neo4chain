@@ -5,11 +5,14 @@ from neo4j.io import ClientError
 from web3 import Web3
 from ethereumetl.service.eth_contract_service import EthContractService
 from ethereumetl.service.token_transfer_extractor import EthTokenTransferExtractor
-import asyncio
+from threading import Thread
 import time
 import logging
 
+logging.basicConfig(format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+                    datefmt='%m-%d %H:%M')
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 contract_service = EthContractService()
 token_transfer_service = EthTokenTransferExtractor()
@@ -295,28 +298,59 @@ def get_local_block_height():
 
 
 def get_local_block_timestamp():
-    results = db.run("MATCH (b:Block) with max(b.number) as top match (b:Block) where b.number = top return b.timestamp;").value()
+    results = db.run(
+        "MATCH (b:Block) with max(b.number) as top match (b:Block) where b.number = top return b.timestamp;").value()
     if results[0] is None:
         return -1
     else:
         return results[0]
 
-async def task_with_log(height, latest):
-    parse_Block(block = w3.eth.getBlock(height))
+
+def task_with_log(height, latest):
+    parse_Block(block=w3.eth.getBlock(height))
     logger.warning(f'{height}/{latest}')
 
-async def work_flow():
+
+def check_missing(local_height):
+    co = 1000
+    logger.warning(f'check missing blocks to {local_height}')
+    def task(height):
+        results = db.run("MATCH (b:Block {number: $height}) RETURN b.number;", height=height).value()
+        if results[0] is None:
+            logger.warning(f'Missing block {height}')
+            parse_Block(block=w3.eth.getBlock(height))
+        else:
+            logger.warning(f'Block {height} exists')
+    height = 0
+    while height < local_height:
+        next_height = height + co
+        if next_height > local_height:
+            next_height = local_height
+        tasks = [Thread(target=task, args=(i,)) for i in range(height, next_height)]
+        for t in tasks:
+            t.start()
+        height = next_height
+
+
+def work_flow():
+    logger.warning('Start workflow')
     latest = w3.eth.getBlock('latest').number
     local_height = get_local_block_height()
+    check_missing(local_height)
 
-    co = 10
-    
+    co = 100
     while local_height < latest-1000:
-        tasks = [task_with_log(local_height+i+1, latest) for i in range(co)]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.warning(f'running on loading mode')
+        tasks = [Thread(target=task_with_log, args=(local_height+i+1, latest)) for i in range(co)]
+        
+        # start all
+        for t in tasks:
+            t.start()
+
         local_height += co
 
     while True:
+        logger.warning(f'running on sync mode')
         latest = w3.eth.getBlock('latest').number
         local_timestamp = get_local_block_timestamp()
         while True:
@@ -333,4 +367,4 @@ async def work_flow():
 
 
 if __name__ == '__main__':
-    asyncio.run(work_flow())
+    work_flow()

@@ -1,17 +1,96 @@
 # %%
-import asyncio
-import copy
-from bitcoinrpc import BitcoinRPC
-from py2neo import Graph, SystemGraph, ClientError, Node, Transaction
-rpc = BitcoinRPC("127.0.0.1", 18332, "bitcoinrpc",
-                 "xauRXtQnwpihPxDQzG2g5Jw1Oaq4NG8W/FBX8CLGfJqK")
+import os
+from decimal import Decimal
+from bitcoin_rpc_client import RPCClient
+from py2neo import Graph, SystemGraph, ClientError, Node, Transaction, Relationship
+rpc = RPCClient("http://127.0.0.1:8332", "bitcoind", "password")
 sg = SystemGraph("bolt://127.0.0.1:7687", auth=("neo4j", "icaneatglass"))
 db = Graph("bolt://127.0.0.1:7687", auth=("neo4j", "icaneatglass"), name="btc")
+
+
+if "DEBUG" in os.environ and os.environ["DEBUG"] != "":
+    import logging
+    import sys
+    logging.basicConfig(
+        format="%(asctime)s %(levelname)-8s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        stream=sys.stdout,
+        level=logging.DEBUG,
+    )
+
+BLOCK_NODE_FIELDS = [
+    "hash",
+    # "confirmations",
+    "height",
+    "version",
+    "versionHex",
+    "merkleroot",
+    "time",
+    "mediantime",
+    "nonce",
+    "bits",
+    "difficulty",
+    # "nTx", // use count() instead
+    "chainwork",
+    "previousblockhash",
+    # "nextblockhash",
+    "strippedsize",
+    "size",
+    "weight",
+]
+
+TX_NODE_FIELDS = [
+    "txid",
+    "hash",
+    "version",
+    "size",
+    "vsize",
+    "weight",
+    "locktime",
+    "fee",
+]
+
+CB_VIN_NODE_FIELDS = [
+    "coinbase",
+    # "txinwitness",
+    "sequence"
+]
+
+VIN_NODE_FIELDS = [
+    "coinbase",
+    # "txinwitness",
+    "sequence"
+]
+
+VOUT_NODE_FIELDS = [
+    "txid",
+    "n",  # index
+    "value",
+    "address"
+
+    "asm"
+    "hex"
+]
+
+ADDRESS_NODE_FIELDS = [
+    "address",
+    "isscript",
+    "iswitness",
+]
+
+CoinbaseNode = Node(("Address"), address='')
 
 
 def create_db():
     sg.run('create database btc')
     # todo: some indexes
+    db.run("CREATE CONSTRAINT ON (b:Block) ASSERT b.hash IS UNIQUE;")
+    db.run("CREATE CONSTRAINT ON (a:Address) ASSERT a.address IS UNIQUE;")
+    db.run("create index on :Output(txid, n)")
+
+
+def ensure_coinbase_addr_exists():
+    db.merge(CoinbaseNode, 'Address', "address")
 
 
 try:
@@ -19,84 +98,131 @@ try:
 except ClientError:
     create_db()
 
+ensure_coinbase_addr_exists()
+
 # %%
 
 
-def save_block(t: Transaction, block: dict):
-    pure_block = copy.deepcopy(block)
-    pure_block.pop("hex", None)
-    pure_block.pop("tx", None)
-    pure_block.pop("txid",  None)
-    pure_block.pop("previousblockhash", None)
-    pure_block.pop("nextblockhash", None)
-    pure_block.pop("confirmations", None)
-    pure_block.pop("versionHex", None)
-    t.merge(Node("Block", **pure_block),
-            primary_label=('Block'), primary_key=("hash"))
-
-def save_cb_vin(t: Transaction, vin):
-    pass
-
-def save_cb(t: Transaction, tx):
-    pure_tx = copy.deepcopy(tx)
-    pure_tx.pop('hex')
-    pure_tx.pop('vin')
-    pure_tx.pop('vout')
-    for vin in tx['vin']:
-        save_cb_vin(t, vin)
-    for vout in tx['vout']:
-        save_vout(t, vout)
-    pass
+def keep_fields_from_obj(obj, fields):
+    new_obj = {}
+    for field in fields:
+        value = obj.get(field, None)
+        if value is None:
+            continue
+        if type(value) is Decimal:
+            new_obj[field] = str(value)
+        else:
+            new_obj[field] = value
+    return new_obj
 
 
-def save_tx(t: Transaction, tx):
+def save_and_return_block(t: Transaction, block: dict):
+    pure_block = keep_fields_from_obj(block, BLOCK_NODE_FIELDS)
+    block_node = Node("Block", **pure_block)
+    t.create(block_node)
+    for tx in block["tx"]:
+        tx_node = save_and_return_tx(t, tx)
+        t.create(Relationship(block_node, "COINTAINS", tx_node))
+    return block_node
+
+
+def save_and_return_tx(t: Transaction, tx):
     # https://developer.bitcoin.org/reference/transactions.html
-    pure_tx = copy.deepcopy(tx)
-    pure_tx.pop('hex')
-    pure_tx.pop('vin')
-    pure_tx.pop('vout')
+    pure_tx = keep_fields_from_obj(tx, TX_NODE_FIELDS)
+    tx_node = Node("Transaction", **pure_tx)
+    t.create(tx_node)
+    # solve vins and vouts
     for vin in tx['vin']:
-        save_vin(t, vin)
+        if vin.get('coinbase', None) is not None and len(vin['coinbase']) > 0:
+            # is a coinbase
+            parent_node = CoinbaseNode
+            vin_node_fields = keep_fields_from_obj(vin, CB_VIN_NODE_FIELDS)
+        else:
+            parent_node = get_vout_from_db(t, vin['txid'], vin['vout'])
+            vin_node_fields = keep_fields_from_obj(vin, VIN_NODE_FIELDS)
+        vin_node = Node("Input", **vin_node_fields)
+        t.create(Node("Input", **vin_node))
+        t.create(Relationship(parent_node, "SPENT_BY", vin_node))
+        t.create(Relationship(vin_node, "VIN", tx_node))
     for vout in tx['vout']:
-        save_vout(t, vout)
-    pass
+        vout_node_fields = keep_fields_from_obj(vout, VOUT_NODE_FIELDS)
+        vout_node = Node("Output", **vout_node_fields)
+        address_node = None
+        if vout['scriptPubKey']['type'] == 'nulldata':
+            vout_node['asm'] = vout['scriptPubKey']['asm']
+            vout_node['hex'] = vout['scriptPubKey']['hex']
+        elif vout['scriptPubKey']['type'] == 'pubkeyhash':
+            address_node = save_and_return_address(
+                t, vout['scriptPubKey']['address'])
+        elif vout['scriptPubKey']['type'] == 'pubkey':
+            descriptor = rpc.getdescriptorinfo("pkh({})".format(
+                vout['scriptPubKey']['asm'].split(" ")[0]))['descriptor']
+            addr = rpc.deriveaddresses(descriptor)[0]
+            address_node = save_and_return_address(t, addr)
+        else:
+            print("unknown type:" + vout['scriptPubKey']['type'])
+            exit(1)
+        t.create(vout_node)
+        t.create(Relationship(tx_node, "VOUT", vout_node))
+        if address_node is not None:
+            t.create(Relationship(vout_node, "TO", address_node))
+    return tx_node
 
 
-def save_address(t: Transaction, addr):
-    pass
+def get_vout_from_db(t, txid, n):
+    out = t.run("MATCH (t:Transaction {txid: $txid})-[:VOUT]->(o:Output) WHERE o.n = $n RETURN o",
+                txid=txid, n=n).evaluate()
+    if out is None:
+        print("ERROR: no output found for txid: {} n: {}".format(txid, n))
+        exit(1)
+    return out
 
 
-async def get_top_height():
-    info = await rpc.getblockchaininfo()
+def save_and_return_address(t: Transaction, addr):
+    result = rpc.validateaddress(addr)
+    if not result['isvalid']:
+        print("invalid address: " + addr)
+        exit(1)
+    else:
+        addr_fields = keep_fields_from_obj(result, ADDRESS_NODE_FIELDS)
+        addr_node = Node("Address", **addr_fields)
+        t.merge(addr_node, "Address", "address")
+        return addr_node
+
+
+def get_remote_top_height():
+    info = rpc.getblockchaininfo()
     return info['blocks']
 
 
-async def get_block_by_height(height):
-    hash = await rpc.getblockhash(height)
+def get_block_by_height(height):
+    hash = rpc.getblockhash(height)
     # verbosity 2 will carry the tx entities
-    return await rpc.getblock(hash, 2)
+    return rpc.getblock(hash, 2)
 
 
-def parse_block(block):
-    t = db.auto()
-    save_block(t, block)
-    is_coinbase = True
-    for tx in block['tx']:
-        if is_coinbase:
-            is_coinbase = False
-            save_cb(t, tx)
-        save_tx(t, tx)
+def get_local_top_block():
+    return db.query("MATCH (b:Block) RETURN b order by b.height desc limit 1;").evaluate()
 
 
-async def main():
-    # c = await get_block_by_height(1)
-    block = await get_block_by_height(1)
-    # parse_block(block)
-    for tx in block["tx"]:
-        print(tx)
-    print()
-    await rpc.aclose()
+def main():
+    remote_top = get_remote_top_height()
+    target = (remote_top - 1000) // 1000 * 1000
+    top_node = get_local_top_block()
+    local_height = 0
+    if top_node is not None:
+        local_height = top_node['height']
+    for i in range(local_height + 1, target):
+        print("processing block: {} -> {}({})".format(i, target, remote_top))
+        block = get_block_by_height(i)
+        t = db.begin()
+        block_node = save_and_return_block(t, block)
+        if top_node is not None:
+            t.create(Relationship(block_node, "PREV", top_node))
+        db.commit(t)
+        top_node = block_node
+
 
 # %%
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
