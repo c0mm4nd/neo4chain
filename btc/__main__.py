@@ -1,11 +1,14 @@
 # %%
+from time import time
+from functools import wraps
 import os
 from decimal import Decimal
 from bitcoin_rpc_client import RPCClient
 from py2neo import Graph, SystemGraph, ClientError, Node, Transaction, Relationship
-rpc = RPCClient("http://127.0.0.1:8332", "bitcoind", "password")
+rpc = RPCClient("http://127.0.0.1:8332", "bitcoin", "password")
 sg = SystemGraph("bolt://127.0.0.1:7687", auth=("neo4j", "icaneatglass"))
-db = Graph("bolt://127.0.0.1:7687", auth=("neo4j", "icaneatglass"), name="btc")
+db = Graph("bolt://127.0.0.1:7687",
+           auth=("neo4j", "icaneatglass"), name="btc")
 
 
 if "DEBUG" in os.environ and os.environ["DEBUG"] != "":
@@ -17,6 +20,18 @@ if "DEBUG" in os.environ and os.environ["DEBUG"] != "":
         stream=sys.stdout,
         level=logging.DEBUG,
     )
+
+
+def timing(f):
+    @wraps(f)
+    def wrap(*args, **kw):
+        ts = time()
+        result = f(*args, **kw)
+        te = time()
+        print("func: {} took {} sec".format(f.__name__, te-ts))
+        return result
+    return wrap
+
 
 BLOCK_NODE_FIELDS = [
     "hash",
@@ -63,13 +78,14 @@ VIN_NODE_FIELDS = [
 ]
 
 VOUT_NODE_FIELDS = [
+    "locktime",  # txid is not unique in the chain
     "txid",
     "n",  # index
     "value",
     "address"
 
-    "asm"
-    "hex"
+    "asm"  # from scriptPubKey.asm by python script
+    "hex"  # from scriptPubKey.hex by python script
 ]
 
 ADDRESS_NODE_FIELDS = [
@@ -86,7 +102,7 @@ def create_db():
     # todo: some indexes
     db.run("CREATE CONSTRAINT ON (b:Block) ASSERT b.hash IS UNIQUE;")
     db.run("CREATE CONSTRAINT ON (a:Address) ASSERT a.address IS UNIQUE;")
-    db.run("create index on :Output(txid, n)")
+    db.run("CREATE CONSTRAINT ON (o:Output) ASSERT (o.height, o.txid, o.n) IS NODE KEY;")
 
 
 def ensure_coinbase_addr_exists():
@@ -121,12 +137,12 @@ def save_and_return_block(t: Transaction, block: dict):
     block_node = Node("Block", **pure_block)
     t.create(block_node)
     for tx in block["tx"]:
-        tx_node = save_and_return_tx(t, tx)
+        tx_node = save_and_return_tx(t, block, tx)
         t.create(Relationship(block_node, "COINTAINS", tx_node))
     return block_node
 
 
-def save_and_return_tx(t: Transaction, tx):
+def save_and_return_tx(t: Transaction, block, tx):
     # https://developer.bitcoin.org/reference/transactions.html
     pure_tx = keep_fields_from_obj(tx, TX_NODE_FIELDS)
     tx_node = Node("Transaction", **pure_tx)
@@ -147,20 +163,27 @@ def save_and_return_tx(t: Transaction, tx):
     for vout in tx['vout']:
         vout_node_fields = keep_fields_from_obj(vout, VOUT_NODE_FIELDS)
         vout_node = Node("Output", **vout_node_fields)
+        vout_node["height"] = block["height"]
+        vout_node["txid"] = tx["txid"]
+
         address_node = None
-        if vout['scriptPubKey']['type'] == 'nulldata':
+        if vout['scriptPubKey']['type'] in ('nulldata', 'nonstandard'):
+            vout_node['type'] = vout['scriptPubKey']['type']
             vout_node['asm'] = vout['scriptPubKey']['asm']
             vout_node['hex'] = vout['scriptPubKey']['hex']
         elif vout['scriptPubKey']['type'] == 'pubkeyhash':
+            vout_node['type'] = "address"
             address_node = save_and_return_address(
                 t, vout['scriptPubKey']['address'])
         elif vout['scriptPubKey']['type'] == 'pubkey':
+            vout_node['type'] = "address"
             descriptor = rpc.getdescriptorinfo("pkh({})".format(
                 vout['scriptPubKey']['asm'].split(" ")[0]))['descriptor']
             addr = rpc.deriveaddresses(descriptor)[0]
             address_node = save_and_return_address(t, addr)
         else:
-            print("unknown type:" + vout['scriptPubKey']['type'])
+            print('unknown type: "{}" on tx {}'.format(
+                vout["scriptPubKey"]["type"], tx["txid"]))
             exit(1)
         t.create(vout_node)
         t.create(Relationship(tx_node, "VOUT", vout_node))
@@ -212,6 +235,11 @@ def main():
     local_height = 0
     if top_node is not None:
         local_height = top_node['height']
+    else:
+        print("processing genesis block")
+        t = db.begin()
+        top_node = save_and_return_block(t, get_block_by_height(0))
+        db.commit(t)
     for i in range(local_height + 1, target):
         print("processing block: {} -> {}({})".format(i, target, remote_top))
         block = get_block_by_height(i)
