@@ -1,0 +1,15 @@
+{
+    "btc": {
+        "url": "https://mainnet.infura.io/v3/dc6980e1063b421bbcfef8d7f58ccd43",
+        "username": "bitcoind",
+        "password": "password"
+    },
+    "neo4j": {
+        "username": "neo4j",
+        "password": "icaneatglass",
+        "database": "btc"
+    },
+    "logger": {
+        "level": "info"
+    }
+}

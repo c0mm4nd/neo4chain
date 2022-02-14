@@ -1,2 +1,2 @@
-bitcoin-requests
-py2neo
+bitcoin-rpc-client
+neo4j
