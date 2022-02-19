@@ -1,15 +1,45 @@
 {
     "btc": {
-        "url": "https://mainnet.infura.io/v3/dc6980e1063b421bbcfef8d7f58ccd43",
-        "username": "bitcoind",
-        "password": "password"
+        "daemon": {
+            "address": "http://127.0.0.1:8332",
+            "username": "bitcoin",
+            "password": "password"
+        },
+        "neo4j": {
+            "address": "neo4j://localhost:7687",
+            "username": "neo4j",
+            "password": "icaneatglass",
+            "database": "btc"
+        },
+        "syncer": {
+            "thread": 100
+        },
+        "checker": {
+            "thread": 1000
+        },
+        "logger": {
+            "level": "info"
+        }
     },
-    "neo4j": {
-        "username": "neo4j",
-        "password": "icaneatglass",
-        "database": "btc"
-    },
-    "logger": {
-        "level": "info"
+    "eth": {
+        "daemon": {
+            "address": "https://mainnet.infura.io/v3/dc6980e1063b421bbcfef8d7f58ccd43"
+        },
+        "neo4j": {
+            "address": "neo4j://localhost:7687",
+            "username": "neo4j",
+            "password": "icaneatglass",
+            "database": "ethereum"
+        },
+        "syncer": {
+            "thread": 100
+        },
+        "checker": {
+            "thread": 1000,
+            "safe-height": -1
+        },
+        "logger": {
+            "level": "info"
+        }
     }
 }

@@ -6,7 +6,7 @@ Neo4j ETL for Ethereum network data
 
 Neo4j >= v4.4
 
-Python 3.9
+Python >= 3.9
 
 ## Usage
 
@@ -18,7 +18,6 @@ Run `__main__.py`
 
 - fix bugs on ERC20/721 detection
 - Block/UncleReward value
-- Support Multithreads/Coroutines
 
 ## FAQ
 
