@@ -7,7 +7,7 @@ from threading import Thread
 from bitcoin_rpc_client import RPCClient
 from neo4j import Driver, GraphDatabase, Session, Transaction
 from neo4j.io import ClientError
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 import os
 import logging
 
@@ -173,10 +173,14 @@ class BitcoinETL:
             """, **block)
 
         i = 0
-        logger.warning("concurrently processing {} txs in block {}".format(
+
+        if executor is None:
+            [self.parse_tx_task(tx) for tx in block["tx"]]
+        else:
+            logger.warning("concurrently processing {} txs in block {}".format(
                 len(block["tx"]), block["height"]))
-        [executor.submit(self.parse_tx_task, block, tx) for tx in block["tx"]]
-        
+            wait([executor.submit(self.parse_tx_task, block, tx)
+                 for tx in block["tx"]])
 
     def parse_tx_task(self, block, tx):
         with self.driver.session(database="btc") as session:
@@ -188,9 +192,7 @@ class BitcoinETL:
 
     def parse_tx(self, t, block, tx):
         # https://developer.bitcoin.org/reference/transactions.html
-        if tx.get("fee") is None:
-            tx["fee"] = None  # is None when Coinbase
-        t.run("""
+        query = """
             CREATE (:Transaction {
                 txid: $txid,
                 hash: $hash,
@@ -202,7 +204,12 @@ class BitcoinETL:
                 locktime: $locktime,
                 fee: $fee
             })
-        """, **tx, height=block["height"])  # add height, because locktime is useless
+        """  # add height, because locktime is useless
+        if tx.get("fee") is None:
+            t.run(query, **tx, height=block["height"], fee=None)
+        else:
+            t.run(query, **tx, height=block["height"])
+
         # solve vins and vouts
         for vin in tx['vin']:
             if vin.get('coinbase') is not None and len(vin['coinbase']) > 0:
@@ -302,7 +309,7 @@ class BitcoinETL:
             else:
                 logger.error('unknown type: "{}" on tx {}'.format(
                     vout["scriptPubKey"]["type"], tx["txid"]))
-                exit(1)
+                os._exit(1)
         t.run("""
         MATCH (b:Block {hash: $hash}), (t:Transaction {txid: $txid})
         WITH b,t
@@ -336,9 +343,18 @@ class BitcoinETL:
         return info['blocks']
 
     def get_block_by_height(self, height):
-        hash = self.rpc.getblockhash(height)
-        # verbosity 2 will carry the tx entities
-        return self.rpc.getblock(hash, 2)
+        while True:
+            retry = 0
+            try:
+                hash = self.rpc.getblockhash(height)
+                # verbosity 2 will carry the tx entities
+                block = self.rpc.getblock(hash, 2)
+                return block
+            except Exception as e:
+                logger.warning(e)
+                if retry == 3:
+                    os._exit(0)
+                retry += 1
 
     def get_local_top_block(self, tx):
         results = tx.run(
@@ -350,22 +366,20 @@ class BitcoinETL:
     def supplement_missing(self, block):
         height = block["height"]
         with self.driver.session(database="btc") as session:
-            results = session.run(
-                "MATCH (b:Block {height: $height}) RETURN b", height=height).value()
-            if results is None or len(results) == 0:
+            if not session.read_transaction(self.block_exists, height):
                 logger.error(f"cannot find block {height}")
-                logger.error(results)
                 os._exit(0)
         # checking txs
         tx_number = len(block["tx"])
         logger.warning(
             f"checking missing tx({tx_number} in total) for block {height}")
-        tasks = [Thread(target=self.supplement_missing_tx_task,
-                        args=(block, tx)) for tx in block["tx"]]
-        for t in tasks:
-            t.start()
-        for t in tasks:
-            t.join()
+        for tx in block["tx"]:
+            self.supplement_missing_tx_task(block, tx)
+
+    def block_exists(self, t, height):
+        results = t.run(
+            "MATCH (b:Block {height: $height}) RETURN count(b)", height=height).value()
+        return results is not None and len(results) != 0 and results[0] == 1
 
     def block_tx_exists(self, t, height, txid):
         results = t.run(
@@ -406,20 +420,18 @@ class BitcoinETL:
             else:
                 end = top_block["height"]
                 logger.warning(f"checking from {safe_height} to {end}")
-                def task(height):
-                    block = self.get_block_by_height(height)
-                    self.supplement_missing(block)
                 with ThreadPoolExecutor(co) as executor:
-                    executor.map(task, range(safe_height+1, end))
+                    wait([executor.submit(self.supplement_missing, self.get_block_by_height(
+                        height)) for height in range(safe_height+1, end)])
 
         if self.config.get("syncer") is not None and local_height < target:
             co = self.config["syncer"].get("thread", 100)
             logger.warning(f'running on sync mode, thread {co}')
             with ThreadPoolExecutor(co) as executor:
-                for i in range(local_height + 1, target):
-                    block = self.get_block_by_height(i)
+                for height in range(local_height + 1, target):
+                    block = self.get_block_by_height(height)
                     logger.warning("processing block(with {} txs): {} -> {}(remote {})".format(
-                        len(block["tx"]), i, target, remote_top))
+                        len(block["tx"]), height, target, remote_top))
                     # session.write_transaction(parse_block, rpc, block)
                     self.parse_block(block, executor=executor)
                 # if top_node is not None:
