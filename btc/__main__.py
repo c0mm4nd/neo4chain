@@ -7,6 +7,7 @@ from threading import Thread
 from bitcoin_rpc_client import RPCClient
 from neo4j import Driver, GraphDatabase, Session, Transaction
 from neo4j.io import ClientError
+from concurrent.futures import ThreadPoolExecutor
 import os
 import logging
 
@@ -20,7 +21,7 @@ def timing(f):
         result = f(*args, **kw)
         te = time()
         if te - ts > 1:
-            logger.warning("func: {} took {} sec".format(f.__name__, te-ts))
+            logger.debug("func: {} took {} sec".format(f.__name__, te-ts))
         return result
     return wrap
 
@@ -144,8 +145,7 @@ class BitcoinETL:
                 raise e
 
     @timing
-    def parse_block(self, block, co=100, is_genesis=False):
-        multi_thread = block["tx"] is not None and len(block["tx"]) * 10 >= co
+    def parse_block(self, block, executor=None, is_genesis=False):
         if is_genesis:
             block["previousblockhash"] = None
         with self.driver.session(database="btc") as session:
@@ -171,24 +171,12 @@ class BitcoinETL:
                     weight: $weight
                 })
             """, **block)
-            if not multi_thread:
-                for tx in block["tx"]:
-                    session.write_transaction(self.parse_tx, block, tx)
 
-        if multi_thread:
-            i = 0
-            logger.warning("concurrently processing {} txs in block {}".format(
+        i = 0
+        logger.warning("concurrently processing {} txs in block {}".format(
                 len(block["tx"]), block["height"]))
-            tasks = [Thread(target=self.parse_tx_task, args=(block, tx))
-                     for tx in block["tx"]]
-            while i < len(tasks):
-                end = i+co if i+co < len(tasks)-1 else len(tasks)-1
-                logger.warning(f"processing block tx {i} to {end}")
-                for t in tasks[i: end]:
-                    t.start()
-                for t in tasks[i: end]:
-                    t.join()
-                i = i+co
+        [executor.submit(self.parse_tx_task, block, tx) for tx in block["tx"]]
+        
 
     def parse_tx_task(self, block, tx):
         with self.driver.session(database="btc") as session:
@@ -221,7 +209,7 @@ class BitcoinETL:
                 # is a coinbase
                 t.run("""
                 MATCH (o:Coinbase) 
-                WITh o
+                WITH o
                 CREATE (vin:Input {
                     coinbase: $coinbase,
                     txinwitness: $txinwitness,
@@ -238,7 +226,7 @@ class BitcoinETL:
             else:
                 t.run("""
                 MATCH (o:Output {txid: $out_txid, n: $out_n}) 
-                WITh o
+                WITH o
                 CREATE (vin:Input {
                     // txid: txid,
                     // vout: vout,
@@ -371,7 +359,7 @@ class BitcoinETL:
         # checking txs
         tx_number = len(block["tx"])
         logger.warning(
-            f"checking missing tx({tx_number} in total ) for block {height}")
+            f"checking missing tx({tx_number} in total) for block {height}")
         tasks = [Thread(target=self.supplement_missing_tx_task,
                         args=(block, tx)) for tx in block["tx"]]
         for t in tasks:
@@ -411,18 +399,29 @@ class BitcoinETL:
         if self.config.get("checker") is not None and local_height > 0:
             co = self.config["checker"].get("thread", 100)
             logger.warning(f'running on check missing mode, thread {co}')
-            self.supplement_missing(
-                self.get_block_by_height(top_block["height"]))
+            safe_height = self.config["checker"].get("safe-height")
+            if safe_height is None:
+                self.supplement_missing(
+                    self.get_block_by_height(top_block["height"]))
+            else:
+                end = top_block["height"]
+                logger.warning(f"checking from {safe_height} to {end}")
+                def task(height):
+                    block = self.get_block_by_height(height)
+                    self.supplement_missing(block)
+                with ThreadPoolExecutor(co) as executor:
+                    executor.map(task, range(safe_height+1, end))
 
         if self.config.get("syncer") is not None and local_height < target:
             co = self.config["syncer"].get("thread", 100)
             logger.warning(f'running on sync mode, thread {co}')
-            for i in range(local_height + 1, target):
-                block = self.get_block_by_height(i)
-                logger.warning("processing block(with {} txs): {} -> {}(remote {})".format(
-                    len(block["tx"]), i, target, remote_top))
-                # session.write_transaction(parse_block, rpc, block)
-                self.parse_block(block, co=co)
+            with ThreadPoolExecutor(co) as executor:
+                for i in range(local_height + 1, target):
+                    block = self.get_block_by_height(i)
+                    logger.warning("processing block(with {} txs): {} -> {}(remote {})".format(
+                        len(block["tx"]), i, target, remote_top))
+                    # session.write_transaction(parse_block, rpc, block)
+                    self.parse_block(block, executor=executor)
                 # if top_node is not None:
                 #     t.create(Relationship(block_node, "PREV", top_node))
 
