@@ -184,11 +184,11 @@ class BitcoinETL:
 
     def parse_tx_task(self, block, tx):
         with self.driver.session(database="btc") as session:
-            try:
-                session.write_transaction(self.parse_tx, block, tx)
-            except Exception as e:
-                logger.error(e)
-                os._exit(0)
+            # try:
+            session.write_transaction(self.parse_tx, block, tx)
+            # except Exception as e:
+            #     logger.error(e)
+            #     os._exit(0)
 
     def parse_tx(self, t, block, tx):
         # https://developer.bitcoin.org/reference/transactions.html
@@ -289,7 +289,7 @@ class BitcoinETL:
                 descriptor = self.rpc.getdescriptorinfo(
                     f"pkh({public_key})")['descriptor']
                 addr = self.rpc.deriveaddresses(descriptor)[0]
-                self.save_address(t, addr, vout['scriptPubKey']['hex'])
+                self.save_address(t, addr, public_key=vout['scriptPubKey']['hex'])
                 t.run("""
                 MATCH (a:Address {address: $address})
                 WITH a
@@ -306,6 +306,42 @@ class BitcoinETL:
                       txid=tx["txid"], n=vout["n"], value=vout["value"],
                       address=addr
                       )
+            elif vout['scriptPubKey']['type'] == 'multisig':
+                asms = vout['scriptPubKey']['asm'].split(" ")
+                public_keys = [publicKey for publicKey in asms if publicKey.startswith("04") or publicKey.startswith("03") or publicKey.startswith("02")]
+                public_keys_required = int(asms[0])
+                assert public_keys_required <= len(public_keys)
+                multisig_address = self.rpc.createmultisig(public_keys_required, public_keys)["address"] # legacy address (p2sh)
+                self.save_address(t, multisig_address, multisig=vout['scriptPubKey']['asm'])
+
+                for public_key in public_keys:
+                    descriptor = self.rpc.getdescriptorinfo(
+                        f"pkh({public_key})")['descriptor']
+                    addr = self.rpc.deriveaddresses(descriptor)[0]
+                    self.save_address(t, addr, public_key=vout['scriptPubKey']['hex'])
+                    t.run("""
+                    MATCH (multisig:Address {address: $multisig_address}), (sub:Address {address: $sub})
+                    WITH multisig, sub
+                    CREATE (multisig)-[:CONTROLLED_BY]->(sub)
+                    """, multisig_address=multisig_address,
+                    sub=addr)
+
+                t.run("""
+                MATCH (a:Address {address: $multisig_address})
+                WITH a
+                CREATE (o:Output {
+                    type: "address",
+                    height: $height,
+                    txid: $txid,
+                    n: $n,
+                    value: $value
+                })
+                CREATE (:Transaction {txid: $txid})-[:VOUT]->(o)
+                CREATE (o)-[:TO]->(a)
+                """, height=block["height"],
+                      txid=tx["txid"], n=vout["n"], value=vout["value"],
+                      multisig_address=multisig_address
+                      )
             else:
                 logger.error('unknown type: "{}" on tx {}'.format(
                     vout["scriptPubKey"]["type"], tx["txid"]))
@@ -316,7 +352,7 @@ class BitcoinETL:
         CREATE (b)-[:CONTAINS]->(t)
         """, hash=block["hash"], txid=tx["txid"])
 
-    def save_address(self, t, addr, public_key=None):
+    def save_address(self, t, addr, public_key=None, multisig=None):
         result = self.rpc.validateaddress(addr)
         if not result['isvalid']:
             logger.error("invalid address: " + addr)
@@ -337,14 +373,21 @@ class BitcoinETL:
                 SET a.pubkey = $pubkey
                 RETURN count(a)
                 """, address=addr, pubkey=public_key).value()
+            if multisig is not None:
+                t.run("""
+                MATCH (a:Address {address: $address})
+                WHERE a.multisig IS NULL
+                SET a.multisig = $multisig
+                RETURN count(a)
+                """, address=addr, multisig=multisig).value()
 
     def get_remote_top_height(self):
         info = self.rpc.getblockchaininfo()
         return info['blocks']
 
     def get_block_by_height(self, height):
+        retry = 0
         while True:
-            retry = 0
             try:
                 hash = self.rpc.getblockhash(height)
                 # verbosity 2 will carry the tx entities
