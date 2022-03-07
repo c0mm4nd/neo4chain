@@ -1,6 +1,5 @@
 # %%
 import json
-from lib2to3.pgen2 import driver
 from hexbytes.main import HexBytes
 from neo4j import GraphDatabase, Session
 from neo4j.io import ClientError
