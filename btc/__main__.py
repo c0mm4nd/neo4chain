@@ -111,7 +111,7 @@ class BitcoinETL:
 
     def create_db(self):
         with self.driver.session() as system:
-            system.run('create database btc')
+            system.run(f'create database {self.dbname}')
 
         # todo: some indexes
         with self.driver.session(database=self.dbname) as session:
@@ -148,7 +148,7 @@ class BitcoinETL:
     def parse_block(self, block, executor=None, is_genesis=False):
         if is_genesis:
             block["previousblockhash"] = None
-        with self.driver.session(database="btc") as session:
+        with self.driver.session(database=self.dbname) as session:
             session.run("""
                 CREATE (b:Block {
                     hash: $hash,
@@ -175,7 +175,7 @@ class BitcoinETL:
         i = 0
 
         if executor is None:
-            [self.parse_tx_task(tx) for tx in block["tx"]]
+            [self.parse_tx_task(block, tx) for tx in block["tx"]]
         else:
             logger.warning("concurrently processing {} txs in block {}".format(
                 len(block["tx"]), block["height"]))
@@ -356,7 +356,7 @@ class BitcoinETL:
         result = self.rpc.validateaddress(addr)
         if not result['isvalid']:
             logger.error("invalid address: " + addr)
-            exit(1)
+            os._exit(1)
         else:
             t.run("""
             MERGE (a:Address {
