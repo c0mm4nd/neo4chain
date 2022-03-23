@@ -120,6 +120,8 @@ class BitcoinETL:
             session.run(
                 "CREATE CONSTRAINT ON (b:Block) ASSERT b.hash IS UNIQUE;")
             session.run(
+                "CREATE CONSTRAINT ON (b:Block) ASSERT b.height IS UNIQUE;")
+            session.run(
                 "CREATE CONSTRAINT ON (a:Address) ASSERT a.address IS UNIQUE;")
             session.run(
                 "CREATE CONSTRAINT ON (o:Output) ASSERT (o.height, o.txid, o.n) IS NODE KEY;")
@@ -232,8 +234,9 @@ class BitcoinETL:
                       sequence=vin["sequence"], txid=tx["txid"])
             else:
                 t.run("""
-                MATCH (o:Output {txid: $out_txid, n: $out_n}) 
+                MATCH (o:Output {txid: $out_txid, n: $out_n})
                 WITH o
+                limit 1
                 CREATE (vin:Input {
                     // txid: txid,
                     // vout: vout,
@@ -327,7 +330,7 @@ class BitcoinETL:
                     sub=addr)
 
                 t.run("""
-                MATCH (a:Address {address: $multisig_address})
+                MATCH (a:Address {address: $multisig_address}) 
                 WITH a
                 CREATE (o:Output {
                     type: "address",
@@ -421,12 +424,12 @@ class BitcoinETL:
 
     def block_exists(self, t, height):
         results = t.run(
-            "MATCH (b:Block {height: $height}) RETURN count(b)", height=height).value()
-        return results is not None and len(results) != 0 and results[0] == 1
+            "MATCH (b:Block {height: $height}) RETURN b limit 1", height=height).value()
+        return results is not None and len(results) != 0
 
     def block_tx_exists(self, t, height, txid):
         results = t.run(
-            "MATCH (tx:Transaction {height: $height, txid: $txid}) RETURN count(tx)", height=height, txid=txid).value()
+            "MATCH (tx:Transaction {height: $height, txid: $txid}) RETURN tx limit 1", height=height, txid=txid).value()
         return results is not None and len(results) != 0 and results[0] != 0
 
     def supplement_missing_tx_task(self, block, tx):

@@ -1,0 +1,17 @@
+{
+  "name": "btc",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bitcoin-simple-rpc": "^0.0.4",
+    "bitcoind-rpc": "^0.9.1",
+    "neo4j-driver": "^4.4.3",
+    "winston": "^3.6.0"
+  }
+}
