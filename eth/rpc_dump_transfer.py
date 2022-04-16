@@ -1,6 +1,5 @@
 from hexbytes import HexBytes
 from ethereumetl.service.token_transfer_extractor import EthTokenTransferExtractor
-from ethereumetl.service.eth_contract_service import EthContractService
 from web3 import Web3
 import json
 import requests

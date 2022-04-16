@@ -40,6 +40,7 @@ class EthTokenTransfer(object):
         self.transaction_hash = None
         self.log_index = None
         self.block_number = None
+        self.value_raw = None
 
 class EthTokenTransferExtractor(object):
     def extract_transfer_from_log(self, receipt_log):
@@ -76,7 +77,11 @@ class EthTokenTransferExtractor(object):
             receipt_log.address)
         token_transfer.from_address = word_to_address(topics_with_data[1])
         token_transfer.to_address = word_to_address(topics_with_data[2])
-        token_transfer.value = hex_to_dec(topics_with_data[3])
+        token_transfer.value_raw = topics_with_data[3]
+        try: 
+            token_transfer.value = hex_to_dec(topics_with_data[3])
+        except ValueError:
+            logger.warning(f'{topics_with_data[3]} is not a hex value')
         # fix data read on web3 AttributeDict
         token_transfer.transaction_hash = transaction_hash
         token_transfer.log_index = log_index

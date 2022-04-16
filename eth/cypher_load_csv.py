@@ -20,16 +20,16 @@ import csv
 logger = logging.getLogger(__name__)
 
 queries = ["""
-                load csv with headers from 'file:///ethereum_etl_address.csv' as line 
-                with line 
+                load csv with headers from 'file:///ethereum_etl_address.csv' as line
+                with line
                 MERGE (a:Address {address: line.address})
                 set a.type = toInteger(line.type), a.is_erc20=toBooleanOrNull(line.is_erc20), a.is_erc721=toBooleanOrNull(line.is_erc721)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_block.csv' as line 
-                with line 
+                load csv with headers from 'file:///ethereum_etl_block.csv' as line
+                with line
                 create (b:Block {
-                    number: toInteger(line.number), 
+                    number: toInteger(line.number),
                     hash: line.hash,
                     timestamp: toInteger(line.timestamp),
                     size: toInteger(line.size),
@@ -41,8 +41,8 @@ queries = ["""
                 }) return count(b)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_transaction.csv' as line 
-                with line 
+                load csv with headers from 'file:///ethereum_etl_transaction.csv' as line
+                with line
                 CREATE (tx:Transaction {
                     hash: line.hash,
                     from: line.from,
@@ -59,87 +59,89 @@ queries = ["""
                 }) return count(tx)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_transfer.csv' as line 
-                with line 
+                load csv with headers from 'file:///ethereum_etl_transfer.csv' as line
+                with line
                 CREATE (a:TokenTransfer {
                     hash_idx: line.hash_idx,
-                    token_address: line.token_addr,         
+                    token_address: line.token_addr,
                     value: line.value
                 })
                 """,
            ############################ REL ############################
            """
-                load csv with headers from 'file:///ethereum_etl_block_reward.csv' as line 
-                with line 
-                MATCH 
+                load csv with headers from 'file:///ethereum_etl_block_reward.csv' as line
+                with line
+                MATCH
                     (b:Block {number: toInteger(line.number)}),
                     (addr:Address {address: line.miner_addr})
                 CREATE (b)-[:BLOCK_REWARD]->(addr)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_uncle_reward.csv' as line 
-                with line 
-                MATCH 
+                load csv with headers from 'file:///ethereum_etl_uncle_reward.csv' as line
+                with line
+                MATCH
                     (b:Block {number: toInteger(line.number)}),
                     (addr:Address {address: line.miner_addr})
                 CREATE (b)-[:UNCLE_REWARD]->(addr)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_contains.csv' as line 
-                MATCH 
+                load csv with headers from 'file:///ethereum_etl_contains.csv' as line
+                MATCH
                     (b:Block {number: toInteger(line.number)}),
                     (tx:Transaction {hash: line.hash})
                 CREATE (b)-[:CONTAINS]->(tx)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_send.csv' as line 
+                load csv with headers from 'file:///ethereum_etl_send.csv' as line
                 MATCH (tx:Transaction {hash: line.hash}),
                     (from:Address {address: line.from})
                 CREATE (from)-[:SEND]->(tx)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_to.csv' as line 
+                load csv with headers from 'file:///ethereum_etl_to.csv' as line
                 MATCH (tx:Transaction {hash: line.hash}),
                     (to:Address {address: line.to})
                 CREATE (tx)-[:TO]->(to)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_call_contract_creation.csv' as line 
+                load csv with headers from 'file:///ethereum_etl_call_contract_creation.csv' as line
                 MATCH (tx:Transaction {hash: line.hash}),
                     (new_contract:Address {address: line.new_contract_address})
                 CREATE (tx)-[:CALL_CONTRACT_CREATION]->(new_contract)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_contains.csv' as line 
-                MATCH 
+                load csv with headers from 'file:///ethereum_etl_contains.csv' as line
+                MATCH
                     (b:Block {number: toInteger(line.number)}),
                     (tx:Transaction {hash: line.hash})
                 CREATE (b)-[:CONTAINS]->(tx)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_send_token.csv' as line 
+                load csv with headers from 'file:///ethereum_etl_send_token.csv' as line
                 MATCH (tf:TokenTransfer {hash_idx: line.hash_idx}),
                     (from:Address {address: line.from}),
                     (to:Address {address: line.to})
                 CREATE (from)-[:SEND_TOKEN]->(tf)-[:TOKEN_TO]->(to)
                 """,
            """
-                load csv with headers from 'file:///ethereum_etl_call_token_transfer.csv' as line 
+                load csv with headers from 'file:///ethereum_etl_call_token_transfer.csv' as line
                 MATCH (tf:TokenTransfer {hash_idx: line.hash_idx}),
                     (tx:Transaction {hash: line.hash})
                 CREATE (tx)-[:CALL_TOKEN_TRANSFER]->(tf)
                 """]
+
 
 class DictWriter(csv.DictWriter):
     def __init__(self, f, fieldnames, restval="", extrasaction="raise",
                  dialect="excel", *args, **kwds):
         self._lock = threading.Lock()
         super().__init__(f, fieldnames, restval, extrasaction,
-                 dialect, *args, **kwds)
+                         dialect, *args, **kwds)
 
     def writerow(self, rowdict):
         with self._lock:
             super().writerow(rowdict)
+
 
 class EthereumCSVETL:
     contract_service = EthContractService()
@@ -267,7 +269,7 @@ class EthereumCSVETL:
             self.writter['send'].writerow({'hash': transaction.hash if type(transaction.hash) is not HexBytes else transaction.hash.hex(),
                                            'from': transaction['from']})
             self.writter['to'].writerow({'hash': transaction.hash if type(transaction.hash) is not HexBytes else transaction.hash.hex(),
-                                           'to': transaction['to']})
+                                         'to': transaction['to']})
         else:
             self.insert_EOA(transaction['from'])
             new_contract_address = self.get_new_contract_address(transaction.hash if type(
@@ -280,7 +282,7 @@ class EthereumCSVETL:
             self.writter['send'].writerow({'hash': transaction.hash if type(transaction.hash) is not HexBytes else transaction.hash.hex(),
                                            'from': transaction['from']})
             self.writter['call_contract_creation'].writerow({'hash': transaction.hash if type(transaction.hash) is not HexBytes else transaction.hash.hex(),
-                                        'new_contract_address': new_contract_address})
+                                                             'new_contract_address': new_contract_address})
 
     def get_new_contract_address(self, transaction_hash):
         receipt = self.w3.eth.getTransactionReceipt(transaction_hash)
@@ -481,150 +483,127 @@ class EthereumCSVETL:
                 t.join()
             height = next_height
 
+    def close_csv(self):
+        for key in self.csv:
+            self.csv[key].close()
+
+    def load_csv(self, t):
+        for query in queries:
+            t.run(query)
+
+    def save_csv(self):
+        for key in self.csv:
+            tmp_file = self.csv[key]
+            filename = os.path.join(
+                self.config["syncer"].get("import-folder", "import"),
+                Path(tmp_file.name).stem,
+            )
+            with open(tmp_file.name, 'r') as tmp, open(filename, 'a') as f:
+                f.writelines(tmp.readlines())
+
+    def save_height(self, height):
+        filename = os.path.join(
+            self.config["syncer"].get("import-folder", "import"),
+            "height"
+        )
+        with open(filename, "w") as f:
+            f.write(str(height))
+
+    def init_csv(self):
+        self.csv['address'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_address.csv'), 'w')
+        self.csv['block'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_block.csv'), 'w')
+        self.csv['transaction'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_transaction.csv'), 'w')
+        self.csv['transfer'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_transfer.csv'), 'w')
+        self.csv['block_reward'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_block_reward.csv'), 'w')
+        self.csv['uncle_reward'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_uncle_reward.csv'), 'w')
+        self.csv['send'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_send.csv'), 'w')
+        self.csv['to'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_to.csv'), 'w')
+        self.csv['call_contract_creation'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_call_contract_creation.csv'), 'w')
+        self.csv['contains'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_contains.csv'), 'w')
+        self.csv['send_token'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_send_token.csv'), 'w')
+        self.csv['call_token_transfer'] = open(os.path.join(
+            self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_call_token_transfer.csv'), 'w')
+
+        self.writter['address'] = DictWriter(self.csv['address'], fieldnames=[
+            'address', 'type', 'is_erc20', 'is_erc721'])
+        self.writter['block'] = DictWriter(self.csv['block'], fieldnames=[
+            'number', 'hash', 'timestamp', 'size', 'nonce', 'difficulty', 'totalDifficulty', 'gasLimit', 'gasUsed'
+        ])
+        self.writter['transaction'] = DictWriter(self.csv['transaction'], fieldnames=[
+            'hash', 'from', 'to', 'value', 'input', 'nonce', 'r', 's', 'v', 'transactionIndex', 'gas', 'gasPrice'])
+        self.writter['transfer'] = DictWriter(self.csv['transfer'], fieldnames=[
+            'hash_idx', 'token_addr', 'value'])
+        self.writter['block_reward'] = DictWriter(self.csv['block_reward'], fieldnames=[
+            'number', 'miner_addr'])
+        self.writter['uncle_reward'] = DictWriter(self.csv['uncle_reward'], fieldnames=[
+            'number', 'miner_addr'])
+        self.writter['send'] = DictWriter(self.csv['send'], fieldnames=[
+            'hash', 'from'])
+        self.writter['to'] = DictWriter(self.csv['to'], fieldnames=[
+            'hash', 'to'])
+        self.writter['call_contract_creation'] = DictWriter(self.csv['call_contract_creation'], fieldnames=[
+            'hash', 'new_contract_address'])
+        self.writter['contains'] = DictWriter(self.csv['contains'], fieldnames=[
+            'number', 'hash'])
+        self.writter['send_token'] = DictWriter(self.csv['send_token'], fieldnames=[
+            'hash_idx', 'from', 'to'])
+        self.writter['call_token_transfer'] = DictWriter(self.csv['call_token_transfer'], fieldnames=[
+            'hash_idx', 'hash'])
+        for key in self.writter:
+            self.writter[key].writeheader()
+
     def work_flow(self):
         local_height = self.get_local_block_height()
         logger.warning(f"the height in neo4j is {local_height}")
         latest = self.w3.eth.get_block(
             'latest', full_transactions=False).number
-        # if self.config.get("checker") is not None and local_height > 0:
-        #     co = self.config["checker"].get("thread", 1000)
-        #     logger.warning(f'running on check missing mode, thread {co}')
-        #     safe_height = self.config["checker"].get("safe-height")
-        #     if safe_height is None or safe_height < 0:
-        #         safe_height = local_height - 1000 if local_height > 1000 else 0
 
-        #     if co is not None:
-        #         self.check_missing(local_height, co=co,
-        #                            safe_height=safe_height)
-        #     else:
-        #         self.check_missing(local_height, safe_height=safe_height)
+        #
+        # WARNNING: no integrity check
+        #
 
-        if self.config.get("syncer") is not None and local_height < latest - 1000:
-            if local_height < 0 and self.config["syncer"].get("manually-height") is not None:
-                local_height = self.config["syncer"]["manually-height"]
-                logger.warning(f"local height is set to {local_height}")
-            co = self.config["syncer"].get("thread", 100)
-            logger.warning(f'running on fast sync mode, thread {co}')
-            # self.config["syncer"].get("tmp-folder", "tmp")
-            def init_csv():
-                self.csv['address'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_address.csv'), 'w')
-                self.csv['block'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_block.csv'), 'w')
-                self.csv['transaction'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_transaction.csv'), 'w')
-                self.csv['transfer'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_transfer.csv'), 'w')
-                self.csv['block_reward'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_block_reward.csv'), 'w')
-                self.csv['uncle_reward'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_uncle_reward.csv'), 'w')
-                self.csv['send'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_send.csv'), 'w')
-                self.csv['to'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_to.csv'), 'w')
-                self.csv['call_contract_creation'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_call_contract_creation.csv'), 'w')
-                self.csv['contains'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_contains.csv'), 'w')
-                self.csv['send_token'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_send_token.csv'), 'w')
-                self.csv['call_token_transfer'] = open(os.path.join(
-                    self.config["syncer"].get("tmp-folder", "tmp"), 'ethereum_etl_call_token_transfer.csv'), 'w')
+        assert(self.config.get("syncer") is not None,
+               'eth.syncer object is required in config')
 
-                self.writter['address'] = DictWriter(self.csv['address'], fieldnames=[
-                    'address', 'type', 'is_erc20', 'is_erc721'])
-                self.writter['block'] = DictWriter(self.csv['block'], fieldnames=[
-                    'number', 'hash', 'timestamp', 'size', 'nonce', 'difficulty', 'totalDifficulty', 'gasLimit', 'gasUsed'
-                ])
-                self.writter['transaction'] = DictWriter(self.csv['transaction'], fieldnames=[
-                    'hash', 'from', 'to', 'value', 'input', 'nonce', 'r', 's', 'v', 'transactionIndex', 'gas', 'gasPrice'])
-                self.writter['transfer'] = DictWriter(self.csv['transfer'], fieldnames=[
-                    'hash_idx', 'token_addr', 'value'])
-                self.writter['block_reward'] = DictWriter(self.csv['block_reward'], fieldnames=[
-                    'number', 'miner_addr'])
-                self.writter['uncle_reward'] = DictWriter(self.csv['uncle_reward'], fieldnames=[
-                    'number', 'miner_addr'])
-                self.writter['send'] = DictWriter(self.csv['send'], fieldnames=[
-                    'hash', 'from'])
-                self.writter['to'] = DictWriter(self.csv['to'], fieldnames=[
-                    'hash', 'to'])
-                self.writter['call_contract_creation'] = DictWriter(self.csv['call_contract_creation'], fieldnames=[
-                    'hash', 'new_contract_address'])
-                self.writter['contains'] = DictWriter(self.csv['contains'], fieldnames=[
-                    'number', 'hash'])
-                self.writter['send_token'] = DictWriter(self.csv['send_token'], fieldnames=[
-                    'hash_idx', 'from', 'to'])
-                self.writter['call_token_transfer'] = DictWriter(self.csv['call_token_transfer'], fieldnames=[
-                    'hash_idx', 'hash'])
-                for key in self.writter:
-                    self.writter[key].writeheader()
+        if local_height < 0 and self.config["syncer"].get("manually-height") is not None:
+            local_height = self.config["syncer"]["manually-height"]
+            logger.warning(f"local height is set to {local_height}")
+        co = self.config["syncer"].get("thread", 100)
+        logger.warning(f'running on fast sync mode, thread {co}')
+        # self.config["syncer"].get("tmp-folder", "tmp")
 
-            def close_csv():
-                for key in self.csv:
-                    self.csv[key].close()
+        with ThreadPoolExecutor(max_workers=min(co, 256)) as executor:
+            while local_height < latest-1000:
+                self.init_csv()
 
-            def load_csv(t):
-                for query in queries:
-                    t.run(query)
+                tasks = [executor.submit(
+                    self.thread_task, local_height+i+1, latest) for i in range(co)]
+                wait(tasks)
 
-            def save_csv():
-                for key in self.csv:
-                    tmp_file = self.csv[key]
-                    filename = os.path.join(
-                        self.config["syncer"].get("import-folder", "import"), 
-                        Path(tmp_file.name).stem,
-                    )
-                    with open(tmp_file.name, 'r') as tmp, open(filename, 'a') as f:
-                        f.writelines(tmp.readlines())
-            
-            def save_height(height):
-                filename = os.path.join(
-                    self.config["syncer"].get("import-folder", "import"),
-                    "height"
-                )
-                with open(filename, "w") as f:
-                    f.write(str(height))
+                self.close_csv()
+                self.save_csv()
 
-            with ThreadPoolExecutor(max_workers=min(co, 256)) as executor:
-                while local_height < latest-1000:
-                    init_csv()
-                    
-                    tasks = [executor.submit(self.thread_task, local_height+i+1, latest) for i in range(co)]
-                    wait(tasks)
+                if not self.config["syncer"].get("manually-import", False):
+                    with self.driver.session(database=self.dbname) as session:
+                        session.write_transaction(self.load_csv)
 
-                    close_csv()
-                    save_csv()
-
-                    if not self.config["syncer"].get("manually-import", False): 
-                        with self.driver.session(database=self.dbname) as session:
-                            session.write_transaction(load_csv)
-
-                    local_height += co #self.get_local_block_height()
-                    save_height(local_height)
-                    logger.warning(f'height updated to {local_height}')
-            # logger.warning("entering daily sync mode")
-            # while True:
-            #     latest = self.w3.eth.get_block(
-            #         'latest', full_transactions=False).number
-            #     local_timestamp = self.get_local_block_timestamp()
-            #     while True:
-            #         local_height += 1
-            #         block = self.w3.eth.getBlock(
-            #             local_height, full_transactions=True)
-            #         if block.timestamp - local_timestamp < 60*60*24:
-            #             break
-            #         logger.warning('processing block(with {} txs) {} -> {}'.format(
-            #             len(block.transactions), local_height, latest
-            #         ))
-            #         with self.driver.session(database=self.dbname) as session:
-            #             session.write_transaction(self.parse_block, block)
-
-                time.sleep(60*60*24)  # sleep one day
+                local_height += co  # self.get_local_block_height()
+                self.save_height(local_height)
+                logger.warning(f'height updated to {local_height}')
 
 
 # %%
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

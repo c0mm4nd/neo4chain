@@ -1,4 +1,4 @@
-# Project ET[H&L]
+# Module eth
 
 Neo4j ETL for Ethereum network data
 
