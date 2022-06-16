@@ -1,0 +1,159 @@
+version: "3"
+
+networks: 
+  neo4net:
+    driver: bridge
+
+volumes:
+  ssd2t:
+    external: true
+  ssd500g:
+    external: true
+  hdd:
+    external: true
+
+services:
+  neo4j:
+    image: neo4j:4.3-enterprise
+    hostname: neo4j
+    container_name: neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - ssd500g:/data
+      - /var/log/neo4j:/logs
+      - ssd500g:/plugins
+      - ssd500g:/var/lib/neo4j/import
+    environment:
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
+      NEO4J_AUTH: "neo4j/icaneatglass"
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.\\*"
+      # NEO4JLABS_PLUGINS: '["apoc", "n10s", "bloom"]'
+    networks:
+      - neo4net
+
+  geth:
+    image: ethereum/client-go:stable
+    hostname: geth
+    container_name: geth
+    restart: unless-stopped
+    ports:
+      - "30303:30303"
+      - "30303:30303/udp"
+      - "8545:8545"
+      - "8546:8546"
+    profiles:
+      - disabled
+    volumes:
+      - ssd2t:/root/ # share .ethereum
+    stop_signal: SIGINT
+    stop_grace_period: 2m
+    command:
+      - --http
+      - --http.api="eth,net,web3"
+      - --http.addr=0.0.0.0
+      - --http.vhosts=*
+      - --http.corsdomain=*
+      - --ws
+      - --ws.origins=*
+      - --ws.addr=0.0.0.0
+      - --ws.api
+      - "eth,net,web3"
+      - --graphql
+      - --graphql.corsdomain=*
+      - --graphql.vhosts=*
+      # Minimum number of executable transaction slots guaranteed per account (default: 16)
+      # - --txpool.accountslots=16
+      # Maximum number of non-executable transaction slots for all accounts (default: 1024)
+      # --txpool.globalqueue=1024
+      # Maximum number of executable transaction slots for all accounts (default: 4096)
+      # - --txpool.globalslots=10000
+      # Maximum amount of time non-executable transaction are queued (default: 3h0m0s)
+      # - --txpool.lifetime=3h0m0s
+      # Megabytes of memory allocated to internal caching (default: 1024)
+      # - --cache=4096
+      # Maximum number of network peers (network disabled if set to 0) (default: 25)
+      # - --maxpeers=100
+      # Blockchain sync mode ("fast", "full", or "light")
+      - --syncmode=full
+      # Blockchain garbage collection mode ("full", "archive") (default: "full")
+      - --gcmode=archive
+      - --txlookuplimit=0
+      - --fakepow
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
+        max-file: "10"
+    networks:
+      - neo4net
+
+  prysm:
+    image: gcr.io/prysmaticlabs/prysm/beacon-chain:stable
+    hostname: prysm
+    container_name: prysm
+    restart: unless-stopped
+    profiles:
+      - disabled
+    ports:
+      - "4000:4000"
+      - "13000:13000"
+      - "12000:12000/udp"
+    volumes:
+      - hdd:/root/ # share .eth2
+    command:
+      - --rpc-host=0.0.0.0
+      - --monitoring-host=0.0.0.0
+      - --http-web3provider=http://geth:8545
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
+        max-file: "10"
+    networks:
+      - neo4net
+
+  bitcoin:
+    image: kylemanna/bitcoind
+    hostname: bitcoin
+    volumes:
+      - hdd:/bitcoin/ # data in /bitcoin/.bitcoin
+    container_name: bitcoin
+    restart: unless-stopped
+    ports: 
+      - "8333:8333"
+      - "127.0.0.1:8332:8332"
+    networks:
+      - neo4net
+
+  neo4btc:
+    depends_on:
+      - bitcoin
+      - neo4j
+    build:
+      context: .
+    # image: neo4chain
+    hostname: neo4btc
+    container_name: neo4btc
+    restart: unless-stopped
+    command:
+      - btc
+    networks:
+      - neo4net
+
+  neo4eth:
+    depends_on:
+      # - geth
+      - neo4j
+    build:
+      context: .
+    # image: neo4chain
+    profiles:
+      - disabled
+    hostname: neo4eth
+    container_name: neo4eth
+    command:
+      - eth
+    networks:
+      - neo4net
