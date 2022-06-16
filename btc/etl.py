@@ -109,7 +109,8 @@ class BitcoinETL:
             session.run(
                 "CREATE CONSTRAINT ON (o:Output) ASSERT (o.height, o.txid, o.n) IS NODE KEY;")
             session.run(
-                "CREATE CONSTRAINT FOR (tx:Transaction) REQUIRE (tx.height, tx.txid) IS UNIQUE;")
+                # CREATE CONSTRAINT FOR (a:A) REQUIRE (a.b, a.c) IS UNIQUE requires neo4j 4.4
+                "CREATE CONSTRAINT ON (tx:Transaction) ASSERT (tx.height, tx.txid) IS NODE KEY;")
             # txid is not unique
             session.run("CREATE INDEX for (tx:Transaction) on (tx.txid);")
             session.run("CREATE INDEX for (o:Output) on (o.txid, o.n);")
@@ -199,25 +200,26 @@ class BitcoinETL:
             if vin.get('coinbase') is not None and len(vin['coinbase']) > 0:
                 # is a coinbase
                 t.run("""
-                MATCH (o:Coinbase) 
-                WITH o
+                MATCH (o:Coinbase), (tx:Transaction {txid: $txid, height: $height})
+                WITH o,tx
                 CREATE (vin:Input {
                     coinbase: $coinbase,
                     txinwitness: $txinwitness,
                     sequence: $sequence
                 })
                 CREATE (o)-[:SPENT_BY]->(vin)
-                CREATE (vin)-[:VIN]->(:Transaction {txid: $txid})
+                CREATE (vin)-[:VIN]->(tx)
                 """,
                       # scriptSig=None if vin.get("scriptSig") is None else vin["scriptSig"]["hex"],
+                      txid=tx["txid"], height=block["height"],
                       coinbase=vin["coinbase"],
                       txinwitness=None if vin.get(
                           "txinwitness") is None else ",".join(vin["txinwitness"]),
-                      sequence=vin["sequence"], txid=tx["txid"])
+                      sequence=vin["sequence"], )
             else:
                 t.run("""
-                MATCH (o:Output {txid: $out_txid, n: $out_n})
-                WITH o
+                MATCH (o:Output {txid: $out_txid, n: $out_n}), (tx:Transaction {txid: $txid, height: $height})
+                WITH o,tx
                 limit 1
                 CREATE (vin:Input {
                     // txid: txid,
@@ -227,19 +229,23 @@ class BitcoinETL:
                     sequence: $sequence
                 })
                 CREATE (o)-[:SPENT_BY]->(vin)
-                CREATE (vin)-[:VIN]->(:Transaction {txid: $txid})
-                """, out_txid=vin['txid'], out_n=vin['vout'],
+                CREATE (vin)-[:VIN]->(tx)
+                """, 
+                    out_txid=vin['txid'], out_n=vin['vout'],
+                    txid=tx["txid"], height=block["height"],
                       # txid=vin["txid"],
                       # vout=vin["out"],
                       scriptSig=None if vin.get(
                           "scriptSig") is None else vin["scriptSig"]["hex"],
                       txinwitness=None if vin.get(
                           "txinwitness") is None else ",".join(vin["txinwitness"]),
-                      sequence=vin["sequence"], txid=tx["txid"])
+                      sequence=vin["sequence"])
 
         for vout in tx['vout']:
             if vout['scriptPubKey']['type'] in ('nulldata', 'nonstandard'):
                 t.run("""
+                MATCH (tx:Transaction {txid: $txid, height: $height})
+                WITH tx
                 CREATE (o:Output {
                     type: $type,
                     height: $height,
@@ -248,14 +254,14 @@ class BitcoinETL:
                     value: $value,
                     hex: $hex
                 })
-                CREATE (:Transaction {txid: $txid})-[:VOUT]->(o)
+                CREATE (tx)-[:VOUT]->(o)
                 """, type=vout['scriptPubKey']['type'], height=block["height"],
                       txid=tx["txid"], n=vout["n"], value=vout["value"], hex=vout['scriptPubKey']['hex'])
             elif vout['scriptPubKey']['type'] in ('pubkeyhash', 'scripthash'):
                 self.save_address(t, vout['scriptPubKey']['address'])
                 t.run("""
-                MATCH (a:Address {address: $address})
-                WITH a
+                MATCH (a:Address {address: $address}),(tx:Transaction {txid: $txid})
+                WITH a,tx
                 CREATE (o:Output {
                     type: "address",
                     height: $height,
@@ -263,10 +269,10 @@ class BitcoinETL:
                     n: $n,
                     value: $value
                 })
-                CREATE (:Transaction {txid: $txid})-[:VOUT]->(o)
+                CREATE (tx)-[:VOUT]->(o)
                 CREATE (o)-[:TO]->(a)
-                """, height=block["height"],
-                      txid=tx["txid"], n=vout["n"], value=vout["value"],
+                """, height=block["height"], txid=tx["txid"], 
+                    n=vout["n"], value=vout["value"],
                       address=vout['scriptPubKey']['address']
                       )
             elif vout['scriptPubKey']['type'] == 'pubkey':
@@ -277,8 +283,8 @@ class BitcoinETL:
                 self.save_address(
                     t, addr, public_key=vout['scriptPubKey']['hex'])
                 t.run("""
-                MATCH (a:Address {address: $address})
-                WITH a
+                MATCH (a:Address {address: $address}),(tx:Transaction {txid: $txid, height: $height})
+                WITH a,tx
                 CREATE (o:Output {
                     type: "address",
                     height: $height,
@@ -286,10 +292,10 @@ class BitcoinETL:
                     n: $n,
                     value: $value
                 })
-                CREATE (:Transaction {txid: $txid})-[:VOUT]->(o)
+                CREATE (tx)-[:VOUT]->(o)
                 CREATE (o)-[:TO]->(a)
-                """, height=block["height"],
-                      txid=tx["txid"], n=vout["n"], value=vout["value"],
+                """, height=block["height"], txid=tx["txid"], 
+                    n=vout["n"], value=vout["value"],
                       address=addr
                       )
             elif vout['scriptPubKey']['type'] == 'multisig':
@@ -317,8 +323,8 @@ class BitcoinETL:
                           sub=addr)
 
                 t.run("""
-                MATCH (a:Address {address: $multisig_address}) 
-                WITH a
+                MATCH (a:Address {address: $multisig_address}),(tx:Transaction {txid: $txid, height: $height})
+                WITH a,tx
                 CREATE (o:Output {
                     type: "address",
                     height: $height,
@@ -326,7 +332,7 @@ class BitcoinETL:
                     n: $n,
                     value: $value
                 })
-                CREATE (:Transaction {txid: $txid})-[:VOUT]->(o)
+                CREATE (tx)-[:VOUT]->(o)
                 CREATE (o)-[:TO]->(a)
                 """, height=block["height"],
                       txid=tx["txid"], n=vout["n"], value=vout["value"],
@@ -337,9 +343,9 @@ class BitcoinETL:
                     vout["scriptPubKey"]["type"], tx["txid"]))
                 os._exit(1)
         t.run("""
-        MATCH (b:Block {hash: $hash}), (t:Transaction {txid: $txid})
-        WITH b,t
-        CREATE (b)-[:CONTAINS]->(t)
+        MATCH (b:Block {hash: $hash}), (tx:Transaction {txid: $txid})
+        WITH b,tx
+        CREATE (b)-[:CONTAINS]->(tx)
         """, hash=block["hash"], txid=tx["txid"])
 
     def save_address(self, t, addr, public_key=None, multisig=None):
@@ -425,7 +431,7 @@ class BitcoinETL:
             txid = tx["txid"]
             if not session.read_transaction(self.block_tx_exists, height, txid):
                 logger.warning(
-                    f"txid {txid} on {height} is not found, supplement...")
+                    f"txid {txid} on {height} is not found, supplementing...")
                 session.write_transaction(self.parse_tx, block, tx)
                 logger.warning(f"txid {txid} on {height} is supplemented")
 
