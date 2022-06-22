@@ -342,11 +342,8 @@ class BitcoinETL:
                 logger.error('unknown type: "{}" on tx {}'.format(
                     vout["scriptPubKey"]["type"], tx["txid"]))
                 os._exit(1)
-        t.run("""
-        MATCH (b:Block {hash: $hash}), (tx:Transaction {txid: $txid})
-        WITH b,tx
-        CREATE (b)-[:CONTAINS]->(tx)
-        """, hash=block["hash"], txid=tx["txid"])
+
+            self.link_block_with_tx(t, block, tx)
 
     def save_address(self, t, addr, public_key=None, multisig=None):
         result = self.rpc.validateaddress(addr)
@@ -425,6 +422,13 @@ class BitcoinETL:
             "MATCH (tx:Transaction {height: $height, txid: $txid}) RETURN tx limit 1", height=height, txid=txid).value()
         return results is not None and len(results) != 0 and results[0] != 0
 
+    def link_block_with_tx(self, t, block, tx):
+        t.run("""
+        MATCH (b:Block {hash: $hash}), (tx:Transaction {txid: $txid, height: $height})
+        WITH b,tx
+        CREATE (b)-[:CONTAINS]->(tx)
+        """, hash=block["hash"], txid=tx["txid"], height=block["height"])
+
     def supplement_missing_tx_task(self, block, tx):
         with self.driver.session(database=self.dbname) as session:
             height = block["height"]
@@ -433,6 +437,7 @@ class BitcoinETL:
                 logger.warning(
                     f"txid {txid} on {height} is not found, supplementing...")
                 session.write_transaction(self.parse_tx, block, tx)
+                session.write_transaction(self.link_block_with_tx, block, tx)
                 logger.warning(f"txid {txid} on {height} is supplemented")
 
     def work_flow(self):
