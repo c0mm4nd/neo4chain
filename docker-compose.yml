@@ -4,27 +4,19 @@ networks:
   neo4net:
     driver: bridge
 
-volumes:
-  ssd2t:
-    external: true
-  ssd500g:
-    external: true
-  hdd:
-    external: true
-
 services:
   neo4j:
-    image: neo4j:4.3-enterprise
+    image: neo4j:4.4-enterprise
     hostname: neo4j
     container_name: neo4j
     ports:
       - "7474:7474"
       - "7687:7687"
     volumes:
-      - ssd500g:/data
+      - /srv/neo4j/data:/data
       - /var/log/neo4j:/logs
-      - ssd500g:/plugins
-      - ssd500g:/var/lib/neo4j/import
+      - /srv/neo4j/plugins:/plugins
+      - /srv/neo4j/import:/var/lib/neo4j/import
     environment:
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
       NEO4J_AUTH: "neo4j/icaneatglass"
@@ -46,7 +38,7 @@ services:
     profiles:
       - disabled
     volumes:
-      - ssd2t:/root/ # share .ethereum
+      - /mnt/ssd2t/geth:/root/.ethereum
     stop_signal: SIGINT
     stop_grace_period: 2m
     command:
@@ -101,7 +93,7 @@ services:
       - "13000:13000"
       - "12000:12000/udp"
     volumes:
-      - hdd:/root/ # share .eth2
+      - /mnt/ssd2t/prysm:/root/.eth2
     command:
       - --rpc-host=0.0.0.0
       - --monitoring-host=0.0.0.0
@@ -118,7 +110,7 @@ services:
     image: kylemanna/bitcoind
     hostname: bitcoin
     volumes:
-      - hdd:/bitcoin/ # data in /bitcoin/.bitcoin
+      - /mnt/hdd3t/bitcoin:/bitcoin/.bitcoin # data in /bitcoin/.bitcoin
     container_name: bitcoin
     restart: unless-stopped
     ports: 
@@ -134,6 +126,8 @@ services:
     build:
       context: .
     # image: neo4chain
+    profiles:
+      - disabled
     hostname: neo4btc
     container_name: neo4btc
     restart: unless-stopped
