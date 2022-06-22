@@ -418,6 +418,7 @@ class EthereumETL:
         latest = self.w3.eth.get_block(
             'latest', full_transactions=False).number
         local_height = self.get_local_block_height()
+        logger.warning(f'local height {local_height}, remote {latest}')
         if self.config.get("checker") is not None and local_height > 0:
             co = self.config["checker"].get("thread", 1000)
             logger.warning(f'running on check missing mode, thread {co}')
