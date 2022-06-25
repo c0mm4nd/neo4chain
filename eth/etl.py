@@ -3,6 +3,8 @@ from hexbytes.main import HexBytes
 from neo4j import GraphDatabase
 from neo4j.io import ClientError
 from web3 import Web3
+from eth.reward_calculator import get_const_reward, get_uncle_reward
+from web3.datastructures import AttributeDict
 from ethereumetl.service.eth_contract_service import EthContractService
 from ethereumetl.service.token_transfer_extractor import EthTokenTransferExtractor
 from threading import Thread
@@ -77,6 +79,12 @@ class EthereumETL:
                 else:
                     raise e
 
+    def get_hash(self, block_or_tx):
+        if type(block_or_tx) in (HexBytes, str):
+            return block_or_tx
+        else:
+            return block_or_tx.hash
+
     def parse_block(self, t, block):
         t.run("""
             create (b:Block {
@@ -111,8 +119,8 @@ class EthereumETL:
             MATCH 
                 (b:Block {number: $number}),
                 (addr:Address {address: $miner_addr})
-            CREATE (b)-[:BLOCK_REWARD]->(addr)
-        """, number=block.number, miner_addr=block.miner)  # TODO: BlockReward value
+            CREATE (b)-[:BLOCK_REWARD {value: $reward}]->(addr)
+        """, number=block.number, miner_addr=block.miner, reward=self.get_block_reward(block))
 
         # https://www.investopedia.com/terms/u/uncle-block-cryptocurrency.asp
         # Only one can enter the ledger as a block, and the other does not
@@ -123,8 +131,8 @@ class EthereumETL:
                 MATCH 
                     (b:Block {number: $number}),
                     (addr:Address {address: $miner_addr})
-                CREATE (b)-[:UNCLE_REWARD]->(addr)
-            """, number=block.number, miner_addr=uncle_block.miner)  # TODO: UncleReward value
+                CREATE (b)-[:UNCLE_REWARD {value: $reward}]->(addr)
+            """, number=block.number, miner_addr=uncle_block.miner, reward=get_uncle_reward(block))
 
         for transaction in block.transactions:
             if type(transaction) in (HexBytes, str):
@@ -132,23 +140,31 @@ class EthereumETL:
             self.parse_Transaction(t, transaction)
 
         for transaction in block.transactions:
-            if type(transaction) in (HexBytes, str):
-                transaction_hash = transaction
-            else:
-                transaction_hash = transaction.hash
+            transaction_hash = self.get_hash(transaction)
             self.parse_TokenTransfer(t, transaction_hash)
 
         for transaction in block.transactions:
-            if type(transaction) in (HexBytes, str):
-                transaction_hash = transaction
-            else:
-                transaction_hash = transaction.hash
+            transaction_hash = self.get_hash(transaction)
             t.run("""
                 MATCH 
                     (b:Block {number: $number}),
                     (tx:Transaction {hash: $hash})
                 CREATE (b)-[:CONTAINS]->(tx)
             """, number=block.number, hash=transaction_hash)
+
+    def get_block_reward(self, block):
+        height = block["height"]
+        const_reward = get_const_reward(height)
+        reward = const_reward
+
+        for transaction in block['transactions']:
+            assert type(transaction) is AttributeDict
+            transaction_hash = self.get_hash(transaction)
+            receipt = self.w3.eth.getTransactionReceipt(transaction_hash)
+            fee = receipt.gasUsed * transaction.gasPrice
+            reward += fee
+
+        return
 
     def parse_Transaction(self, t, transaction):
         self.insert_Transaction(t, transaction)
@@ -275,7 +291,7 @@ class EthereumETL:
         """, hash_idx=hash_idx,
               token_addr=transfer.token_address,  # do not add (Contract)-[handles]->[TokenTransfer] to avoid 1-INF too heavy relationship
               value=str(transfer.value),
-              value_raw= transfer.value_raw
+              value_raw=transfer.value_raw
               )
 
         for addr in (transfer.from_address, transfer.to_address):
@@ -327,7 +343,8 @@ class EthereumETL:
             retry = 0
             while True:
                 try:
-                    block = self.w3.eth.get_block(height, full_transactions=True)
+                    block = self.w3.eth.get_block(
+                        height, full_transactions=True)
                     break
                 except Exception as e:
                     logger.error("failed to fetch block on syncing")
@@ -396,7 +413,6 @@ class EthereumETL:
                     time.sleep(2)
                     retry += 1
 
-
     def check_missing(self, local_height, co=100, safe_height=0):
         logger.warning(
             f'check missing blocks from {safe_height} to {local_height}')
@@ -425,7 +441,7 @@ class EthereumETL:
             safe_height = self.config["checker"].get("safe-height")
             if safe_height is None or safe_height < 0:
                 safe_height = local_height - 1000 if local_height > 1000 else 0
-            
+
             if co is not None:
                 self.check_missing(local_height, co=co,
                                    safe_height=safe_height)
@@ -466,4 +482,3 @@ class EthereumETL:
                         session.write_transaction(self.parse_block, block)
 
                 time.sleep(60*60*24)  # sleep one day
-
