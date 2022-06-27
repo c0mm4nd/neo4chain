@@ -81,7 +81,9 @@ class EthTokenTransferExtractor(object):
         try: 
             token_transfer.value = hex_to_dec(topics_with_data[3])
         except ValueError:
-            logger.warning(f'{topics_with_data[3]} is not a hex value')
+            logger.info(f'{topics_with_data[3]} is not a hex-encoded dec value')
+            logger.info('so this event is not a transfer')
+            return None
         # fix data read on web3 AttributeDict
         token_transfer.transaction_hash = transaction_hash
         token_transfer.log_index = log_index
