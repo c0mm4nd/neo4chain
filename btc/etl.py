@@ -230,9 +230,9 @@ class BitcoinETL:
                 })
                 CREATE (o)-[:SPENT_BY]->(vin)
                 CREATE (vin)-[:VIN]->(tx)
-                """, 
-                    out_txid=vin['txid'], out_n=vin['vout'],
-                    txid=tx["txid"], height=block["height"],
+                """,
+                      out_txid=vin['txid'], out_n=vin['vout'],
+                      txid=tx["txid"], height=block["height"],
                       # txid=vin["txid"],
                       # vout=vin["out"],
                       scriptSig=None if vin.get(
@@ -271,8 +271,8 @@ class BitcoinETL:
                 })
                 CREATE (tx)-[:VOUT]->(o)
                 CREATE (o)-[:TO]->(a)
-                """, height=block["height"], txid=tx["txid"], 
-                    n=vout["n"], value=vout["value"],
+                """, height=block["height"], txid=tx["txid"],
+                      n=vout["n"], value=vout["value"],
                       address=vout['scriptPubKey']['address']
                       )
             elif vout['scriptPubKey']['type'] == 'pubkey':
@@ -294,8 +294,8 @@ class BitcoinETL:
                 })
                 CREATE (tx)-[:VOUT]->(o)
                 CREATE (o)-[:TO]->(a)
-                """, height=block["height"], txid=tx["txid"], 
-                    n=vout["n"], value=vout["value"],
+                """, height=block["height"], txid=tx["txid"],
+                      n=vout["n"], value=vout["value"],
                       address=addr
                       )
             elif vout['scriptPubKey']['type'] == 'multisig':
@@ -399,7 +399,7 @@ class BitcoinETL:
             return None
         return results[0]
 
-    def supplement_missing(self, block):
+    def supplement_missing(self, block, tx_executor):
         height = block["height"]
         with self.driver.session(database="btc") as session:
             if not session.read_transaction(self.block_exists, height):
@@ -409,8 +409,8 @@ class BitcoinETL:
         tx_number = len(block["tx"])
         logger.warning(
             f"checking missing tx({tx_number} in total) for block {height}")
-        for tx in block["tx"]:
-            self.supplement_missing_tx_task(block, tx)
+        wait([tx_executor.sumbit(self.supplement_missing_tx_task, block, tx)
+              for tx in block["tx"]])
 
     def block_exists(self, t, height):
         results = t.run(
@@ -455,23 +455,25 @@ class BitcoinETL:
             self.parse_block(self.get_block_by_height(0), is_genesis=True)
 
         if self.config.get("checker") is not None and local_height > 0:
-            co = self.config["checker"].get("thread", 100)
-            logger.warning(f'running on check missing mode, thread {co}')
-            safe_height = self.config["checker"].get("safe-height")
-            if safe_height is None:
-                self.supplement_missing(
-                    self.get_block_by_height(top_block["height"]))
-            else:
-                end = top_block["height"]
-                logger.warning(f"checking from {safe_height} to {end}")
-                with ThreadPoolExecutor(co) as executor:
-                    wait([executor.submit(self.supplement_missing, self.get_block_by_height(
-                        height)) for height in range(safe_height+1, end)])
+            blocks_co = self.config["checker"].get("blocks", 100)
+            if self.config["syncer"].get("txs"):
+                logger.warning("the check thread on btc txs is limited at 1")
+            logger.warning(
+                f'running on check missing mode, blocks thread {blocks_co}')
+            safe_height = self.config["checker"].get(
+                "safe-height", local_height-blocks_co if local_height > blocks_co else 0)
+            end = top_block["height"]
+            logger.warning(f"checking from {safe_height} to {end}")
+            with ThreadPoolExecutor(blocks_co) as executor, ThreadPoolExecutor(blocks_co) as tx_executor:
+                wait([executor.submit(self.supplement_missing, self.get_block_by_height(
+                    height), tx_executor) for height in range(safe_height+1, end)])
 
         if self.config.get("syncer") is not None and local_height < target:
-            co = self.config["syncer"].get("thread", 100)
-            logger.warning(f'running on sync mode, thread {co}')
-            with ThreadPoolExecutor(co) as executor:
+            if self.config["syncer"].get("blocks"):
+                logger.warning("the etl thread on btc block is limited at 1")
+            blocks_co = self.config["syncer"].get("txs", 100)
+            logger.warning(f'running on sync mode, thread {blocks_co}')
+            with ThreadPoolExecutor(blocks_co) as executor:
                 for height in range(local_height + 1, target):
                     block = self.get_block_by_height(height)
                     logger.warning("processing block(with {} txs): {} -> {}(remote {})".format(

@@ -6,16 +6,17 @@
             "password": "password"
         },
         "neo4j": {
-            "address": "neo4j://localhost:7687",
+            "address": "neo4j://127.0.0.1:7687",
             "username": "neo4j",
             "password": "icaneatglass",
             "database": "btc"
         },
         "syncer": {
-            "thread": 100
+            "txs": 100
         },
         "checker": {
-            "thread": 1000
+            "txs": 100,
+            "blocks": 1000
         },
         "logger": {
             "level": "info"
@@ -23,20 +24,21 @@
     },
     "eth": {
         "daemon": {
-            "address": "https://mainnet.infura.io/v3/dc6980e1063b421bbcfef8d7f58ccd43"
+            "address": "http://127.0.0.1:8545"
         },
         "neo4j": {
-            "address": "neo4j://localhost:7687",
+            "address": "bolt://127.0.0.1:7687",
             "username": "neo4j",
             "password": "icaneatglass",
-            "database": "ethereum"
+            "database": "eth"
         },
         "syncer": {
-            "thread": 100
+            "blocks": 100,
+            "txs": 1000
         },
         "checker": {
-            "thread": 1000,
-            "safe-height": -1
+            "blocks": 1000,
+            "safe-height": 1200000
         },
         "logger": {
             "level": "info"
