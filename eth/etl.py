@@ -66,7 +66,7 @@ class EthereumETL:
             session.run(
                 "CREATE CONSTRAINT tx_hash_uq ON (tx:Transaction) ASSERT tx.hash IS UNIQUE")
             session.run(
-                "CREATE CONSTRAINT tf_hash_idx_uq ON (tx:TokenTransfer) ASSERT tx.hash_idx IS UNIQUE")
+                "CREATE CONSTRAINT tf_hash_idx_uq ON (tf:TokenTransfer) ASSERT (tf.transaction_hash, tf.log_index) IS NODE KEY")
 
     def ensure_db_exists(self):
         with self.driver.session(database=self.dbname) as session:
@@ -121,59 +121,86 @@ class EthereumETL:
                 (addr:Address {address: $miner_addr})
             CREATE p=(b)-[:BLOCK_REWARD {value: $reward}]->(addr)
             return count(p) as c
-        """, number=block.number, miner_addr=block.miner, reward=self.get_block_reward(block)).values()
+        """, number=block.number, miner_addr=block.miner, reward=str(block["reward"])).values()
         assert results[0][0] == 1, results
 
         # https://www.investopedia.com/terms/u/uncle-block-cryptocurrency.asp
         # Only one can enter the ledger as a block, and the other does not
-        for uncle_idx in range(0, len(block.uncles)):
-            uncle_block = self.w3.eth.get_uncle_by_block(
-                block.number, uncle_idx)
-
+        for uncle_block in block["uncle_blocks"]:
             results = t.run("""
                 MATCH 
                     (b:Block {number: $number}),
                     (addr:Address {address: $miner_addr})
                 CREATE p=(b)-[:UNCLE_REWARD {value: $reward}]->(addr)
                 return count(p) as c
-            """, number=block.number, miner_addr=uncle_block.miner, reward=get_uncle_reward(block['number'], hex_to_int(uncle_block['number']))).values()
+            """,
+                            number=block.number,
+                            miner_addr=uncle_block.miner,
+                            reward=str(get_uncle_reward(
+                                block['number'], hex_to_int(uncle_block['number'])))
+                            ).values()
             assert results[0][0] == 1, results
+
+    def enhance_block(self, block):
+        block.__dict__["uncle_blocks"] = []
+        for uncle_idx in range(0, len(block.uncles)):
+            uncle_block = self.w3.eth.get_uncle_by_block(
+                block.number, uncle_idx)
+            block["uncle_blocks"].append(uncle_block)
+
+        reward = get_const_reward(block["number"])
+
+        block.__dict__["created_contracts"] = {}
+        block.__dict__["transfers"] = {}
+        block.__dict__["transaction_receipt"] = {}
+        for transaction in block.transactions:
+            transaction_hash = self.get_hash(transaction)
+            if not transaction.to:
+                new_contract_address = self.get_new_contract_address(
+                    transaction_hash)
+                block["created_contracts"][transaction_hash] = new_contract_address
+                logger.info('tx {} created a new contract {}'.format(
+                            transaction_hash, new_contract_address))
+
+            block["transfers"][transaction_hash] = []
+            receipt = self.w3.eth.get_transaction_receipt(transaction_hash)
+            block.__dict__["transaction_receipt"][transaction_hash] = receipt
+            logs = receipt.logs
+            for log in logs:
+                transfer = self.token_transfer_service.extract_transfer_from_log(
+                    log)
+                if transfer:
+                    block["transfers"][transaction_hash].append(transfer)
+            fee = receipt.gasUsed * transaction.gasPrice
+            reward += fee
+        block.__dict__["reward"] = reward
+        return block
 
     def ensure_block_Addresses(self, block):
         with self.driver.session(database=self.dbname) as session:
             self.insert_Address_EOA(block.miner)
-            for uncle_idx in range(0, len(block.uncles)):
-                uncle_block = self.w3.eth.get_uncle_by_block(
-                    block.number, uncle_idx)
+            for uncle_block in block["uncle_blocks"]:
                 self.insert_Address_EOA(uncle_block['miner'])
             for transaction in block.transactions:
                 transaction_hash = self.get_hash(transaction)
-                if transaction.to != None:
+                if transaction.to:
                     # from must be an EOA
                     self.insert_Address_EOA(transaction['from'])
-                    self.insert_Address_Unknown(
-                        transaction['to'])  # to is unknown
+                    if len(block.__dict__["transaction_receipt"][transaction_hash].logs) > 0:
+                        self.insert_Address_Contract(transaction['to'])
+                    else:
+                        self.insert_Address_Unknown(
+                            transaction['to'])  # to is unknown
                 else:
                     self.insert_Address_EOA(transaction['from'])
-                    new_contract_address = self.get_new_contract_address(
-                        transaction_hash)
-                    assert type(new_contract_address) == str and len(
-                        new_contract_address) > 0
-                    self.insert_Address_Contract(new_contract_address)
-                    logger.info('tx {} created a new contract {}'.format(
-                        transaction_hash, new_contract_address))
+                    self.insert_Address_Contract(
+                        block["created_contracts"][transaction_hash])
 
-                logs = self.w3.eth.get_transaction_receipt(
-                    transaction_hash).logs
-                for log in logs:
-                    transfer = self.token_transfer_service.extract_transfer_from_log(
-                        log)
-                    if transfer is not None:
-                        for addr in (transfer.from_address, transfer.to_address):
-                            self.insert_Address_Unknown(addr)
+                for transfer in block["transfers"][transaction_hash]:
+                    for addr in (transfer.from_address, transfer.to_address):
+                        self.insert_Address_Unknown(addr)
 
     def parse_block_tx(self, t, block, transaction):
-        # transaction = self.w3.eth.get_transaction(transaction)
         assert type(transaction) not in (HexBytes, str)
 
         transaction_hash = self.get_hash(transaction)
@@ -193,10 +220,7 @@ class EthereumETL:
                 'from': transaction['from'], 'to': transaction['to']}).values()
             assert results[0][0] == 1
         else:
-            new_contract_address = self.get_new_contract_address(
-                transaction_hash)
-            assert type(new_contract_address) == str and len(
-                new_contract_address) > 0
+            new_contract_address = block["created_contracts"][transaction_hash]
 
             results = t.run("""
             MATCH (tx:Transaction {hash: $hash}),
@@ -210,12 +234,8 @@ class EthereumETL:
             ).values()
             assert results[0][0] == 1
 
-        logs = self.w3.eth.get_transaction_receipt(transaction_hash).logs
-        for log in logs:
-            transfer = self.token_transfer_service.extract_transfer_from_log(
-                log)
-            if transfer is not None:
-                self.insert_TokenTransfer(t, transfer)
+        for transfer in block["transfers"][transaction_hash]:
+            self.insert_TokenTransfer(t, transfer)
 
         results = t.run("""
                 MATCH 
@@ -225,20 +245,6 @@ class EthereumETL:
                 return count(p) as c
             """, number=block.number, hash=transaction_hash).values()
         assert results[0][0] == 1, results
-
-    def get_block_reward(self, block):
-        number = block["number"]
-        const_reward = get_const_reward(number)
-        reward = const_reward
-
-        for transaction in block['transactions']:
-            assert type(transaction) is AttributeDict
-            transaction_hash = self.get_hash(transaction)
-            receipt = self.w3.eth.getTransactionReceipt(transaction_hash)
-            fee = receipt.gasUsed * transaction.gasPrice
-            reward += fee
-
-        return
 
     def get_new_contract_address(self, transaction_hash):
         receipt = self.w3.eth.getTransactionReceipt(transaction_hash)
@@ -388,20 +394,18 @@ class EthereumETL:
             'gasPrice': str(transaction['gasPrice'])})
 
     def insert_TokenTransfer(self, t, transfer):
-        # define hash_idx
-        hash_idx = transfer.transaction_hash + '.' + str(transfer.log_index)
-
         # transfer struct
         # https://github.com/blockchain-etl/ethereum-etl/blob/develop/ethereumetl/domain/token_transfer.py#L24
         results = t.run("""
         CREATE (a:TokenTransfer {
-            hash_idx: $hash_idx,
+            transaction_hash: $transaction_hash,
+            log_index: $log_index,
             token_address: $token_addr,         
             value: $value,
             value_raw: $value_raw
         })
         return count(a)
-        """, hash_idx=hash_idx,
+        """, transaction_hash=transfer.transaction_hash, log_index=transfer.log_index,
                         token_addr=transfer.token_address,  # do not add (Contract)-[handles]->[TokenTransfer] to avoid 1-INF too heavy relationship
                         value=str(transfer.value),
                         value_raw=transfer.value_raw
@@ -410,19 +414,24 @@ class EthereumETL:
 
         # add from replationships & add to replationships
         results = t.run("""
-            MATCH (tf:TokenTransfer {hash_idx: $hash_idx}),
+            MATCH (tf:TokenTransfer {transaction_hash: $transaction_hash, log_index: $log_index}),
                 (from:Address {address: $from}),
                 (to:Address {address: $to})
-            CREATE (from)-[:SEND_TOKEN]->(tf)-[:TOKEN_TO]->(to)
-            """, {'hash_idx': hash_idx, 'from': transfer.from_address, 'to': transfer.to_address}).values()
+            CREATE p=(from)-[:SEND_TOKEN]->(tf)-[:TOKEN_TO]->(to)
+            return count(p)
+            """, {
+            "transaction_hash": transfer.transaction_hash,
+            "log_index": transfer.log_index,
+            "from": transfer.from_address,
+            "to": transfer.to_address}).values()
         assert results[0][0] == 1
         # add tx_hash replationships
         results = t.run("""
-            MATCH (tf:TokenTransfer {hash_idx: $hash_idx}),
+            MATCH (tf:TokenTransfer {transaction_hash: $transaction_hash, log_index: $log_index}),
                 (tx:Transaction {hash: $hash})
             CREATE p=(tx)-[:CALL_TOKEN_TRANSFER]->(tf)
             return count(p)
-            """, hash_idx=hash_idx, hash=transfer.transaction_hash).values()
+            """, transaction_hash=transfer.transaction_hash, log_index=transfer.log_index, hash=transfer.transaction_hash).values()
         assert results[0][0] == 1
 
     def get_local_block_height(self):
@@ -465,40 +474,77 @@ class EthereumETL:
             return None
         return results[0]['tx']
 
+    def get_local_Transfer(self, t, transaction_hash, log_index):
+        results = t.run(
+            "MATCH (tf:TokenTransfer {transaction_hash: $transaction_hash, log_index: $log_index}) return tf;",
+            transaction_hash=transaction_hash,
+            log_index=log_index).data()
+        if type(results) is not list:
+            logger.error(
+                f"failed to inspect TokenTransfer as {transaction_hash + str(log_index)}: results are {results}")
+            os._exit(0)
+        if len(results) != 1 or results[0] is None:
+            return None
+        return results[0]['tx']
+
+    def insert_block_conatins_tx(self, t, block_number, transaction_hash):
+        results = t.run("""
+                                MATCH 
+                                    (b:Block {number: $number}),
+                                    (tx:Transaction {hash: $hash})
+                                CREATE p=(b)-[:CONTAINS]->(tx)
+                                return count(p) as c
+                            """, number=block_number, hash=transaction_hash).values()
+        assert results[0][0] == 1, results
+
     def check_task(self, number):
         logger.info("checking block {}".format(number))
 
         block = self.w3.eth.get_block(number, full_transactions=True)
+        block = self.enhance_block(block)
         self.ensure_block_Addresses(block)  # should not in any session context
 
         with self.driver.session(database=self.dbname) as session:
             local_block = session.read_transaction(
                 self.get_local_Block, number)
 
-            if local_block is None:
+            if local_block:
+                logger.info(f'Block {number} exists, checking its txs')
+                for transaction in block.transactions:
+                    transaction_hash = self.get_hash(transaction)
+                    if not session.read_transaction(self.get_local_Transaction, transaction_hash):
+                        logger.warning(
+                            f'block {number} exists but missing transaction {transaction_hash}')
+                        session.write_transaction(
+                            self.parse_block_tx, block, transaction)
+                        session.write_transaction(
+                            self.insert_block_conatins_tx, block["number"], transaction_hash)
+                        logger.warning(f"supplemented tx {transaction_hash}")
+            else:
                 logger.warning(f'Missing block {number}')
                 session.write_transaction(self.parse_block_header, block)
                 logger.warning(f"supplemented block {number}")
 
                 for transaction in block.transactions:
                     transaction_hash = self.get_hash(transaction)
-                    if session.read_transaction(self.get_local_Transaction, transaction_hash) is None:
+                    if not session.read_transaction(self.get_local_Transaction, transaction_hash):
                         logger.warning(
-                            f'missing transaction {transaction_hash}')
+                            f'missing transaction {transaction_hash} at block {number}')
                         session.write_transaction(
                             self.parse_block_tx, block, transaction)
-                        logger.warning(f"supplemented tx {transaction_hash}")
-            else:
-                logger.info(f'Block {number} exists, checking its txs')
-                for transaction in block.transactions:
-                    transaction_hash = self.get_hash(transaction)
-                    if session.read_transaction(self.get_local_Transaction, transaction_hash) is None:
+                        no_contains = True
                         logger.warning(
-                            f'missing transaction {transaction_hash}')
-                        session.write_transaction(
-                            self.parse_block_tx, block, transaction)
-                        logger.warning(f"supplemented tx {transaction_hash}")
+                            f"supplemented tx {transaction_hash} at block {number}")
 
+                    for transfer in block["transfers"][transaction_hash]:
+                        if not session.read_transaction(self.get_local_Transfer, transaction_hash, transfer.log_index):
+                            session.write_transaction(
+                                self.insert_TokenTransfer, transfer)
+                            no_contains = True
+
+                    if no_contains:
+                        session.write_transaction(
+                            self.insert_block_conatins_tx, block["number"], transaction_hash)
             return
 
     def check_missing(self, local_height, co=100, safe_height=0):
@@ -522,7 +568,15 @@ class EthereumETL:
             session.write_transaction(
                 self.parse_block_tx, block, transaction)
 
-    def sync_task(self, block, tx_executor):
+    def sync_task(self, block_number, latest, tx_executor):
+        block = self.w3.eth.get_block(block_number, full_transactions=True)
+        block = self.enhance_block(block)
+
+        logger.warning(
+            'processing block(with {} txs) {} -> {}'.format(
+                len(block.transactions), block_number, latest
+            ))
+
         self.ensure_block_Addresses(block)
         with self.driver.session(database=self.dbname) as session:
             session.write_transaction(self.parse_block_header, block)
@@ -535,7 +589,7 @@ class EthereumETL:
             'latest', full_transactions=False).number
         local_height = self.get_local_block_height()
         logger.warning(f'local height {local_height}, remote {latest}')
-        if self.config.get("checker") is not None and local_height > 0:
+        if self.config.get("checker") and local_height > 0:
             if self.config["checker"].get("txs"):
                 logger.warning("the check thread on eth txs is limited at 1")
             blocks_co = self.config["checker"].get("blocks", 1000)
@@ -544,9 +598,10 @@ class EthereumETL:
             safe_height = self.config["checker"].get(
                 "safe-height", local_height - blocks_co if local_height > blocks_co else 0)
 
-            self.check_missing(local_height, co=blocks_co,safe_height=safe_height)
+            self.check_missing(local_height, co=blocks_co,
+                               safe_height=safe_height)
 
-        if self.config.get("syncer") is not None and local_height < latest - 1000:
+        if self.config.get("syncer") and local_height < latest - 1000:
             blocks_co = self.config["syncer"].get("blocks", 100)
             blocks_co = self.config["syncer"].get("txs", 100)
             logger.warning(f'running on slow sync mode, thread {blocks_co}.')
@@ -556,32 +611,18 @@ class EthereumETL:
             with ThreadPoolExecutor(blocks_co) as block_executor, ThreadPoolExecutor(blocks_co) as tx_executor:
                 # run multi thread in txs
                 for number in range(local_height + 1, latest):
-                    block = self.w3.eth.get_block(
-                        number, full_transactions=True)
-                    logger.warning(
-                        'processing block(with {} txs) {} -> {}'.format(
-                            len(block.transactions), block.number, latest
-                        ))
-                    wait([block_executor.submit(self.sync_task(block, tx_executor))])
+                    wait([block_executor.submit(
+                        self.sync_task(number, latest, tx_executor))])
 
                 logger.warning("entering daily sync mode")
                 while True:
                     latest = self.w3.eth.get_block(
-                        'latest', full_transactions=False).number
+                        'latest', full_transactions=False)
+
                     local_timestamp = self.get_local_block_timestamp()
-                    while True:
-                        local_height += 1
-                        block = self.w3.eth.getBlock(
-                            local_height, full_transactions=True)
-                        if block.timestamp - local_timestamp < 60*60*24:
-                            time.sleep(local_timestamp + 60 *
-                                       60*24 - block.timestamp)
-                            break
-                        logger.warning('processing block(with {} txs) {} -> {}'.format(
-                            len(block.transactions), local_height, latest
-                        ))
-
+                    if latest.timestamp - local_timestamp < 60*60*24:
+                        time.sleep(local_timestamp + 60 *
+                                   60*24 - latest.timestamp)
+                    for number in range(local_height + 1, latest - 1000):
                         wait([block_executor.submit(
-                            self.sync_task(block, tx_executor))])
-
-                    time.sleep(60*60*24)  # sleep one day
+                            self.sync_task(local_height, latest, tx_executor))])
