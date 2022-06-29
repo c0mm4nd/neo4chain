@@ -16,7 +16,8 @@
         },
         "checker": {
             "txs": 100,
-            "blocks": 1000
+            "blocks": 1000,
+            "safe-height": 0
         },
         "logger": {
             "level": "info"
@@ -38,7 +39,7 @@
         },
         "checker": {
             "blocks": 1000,
-            "safe-height": 1200000
+            "safe-height": 0
         },
         "logger": {
             "level": "info"

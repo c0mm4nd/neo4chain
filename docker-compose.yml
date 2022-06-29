@@ -17,6 +17,7 @@ services:
       - /var/log/neo4j:/logs
       - /srv/neo4j/plugins:/plugins
       - /srv/neo4j/import:/var/lib/neo4j/import
+      - /srv/neo4j/conf:/conf
     environment:
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
       NEO4J_AUTH: "neo4j/icaneatglass"
@@ -35,15 +36,16 @@ services:
       - "30303:30303/udp"
       - "8545:8545"
       - "8546:8546"
-    profiles:
-      - disabled
     volumes:
       - /mnt/ssd2t/geth:/root/.ethereum
+      - /mnt/ssd2t/ethash:/root/.ethash
+      - /mnt/ssd2t/ancient:/root/ancient
     stop_signal: SIGINT
     stop_grace_period: 2m
     command:
       - --http
-      - --http.api="eth,net,web3"
+      - --http.api
+      - "admin,eth,net,web3"
       - --http.addr=0.0.0.0
       - --http.vhosts=*
       - --http.corsdomain=*
@@ -51,7 +53,7 @@ services:
       - --ws.origins=*
       - --ws.addr=0.0.0.0
       - --ws.api
-      - "eth,net,web3"
+      - "admin,eth,net,web3"
       - --graphql
       - --graphql.corsdomain=*
       - --graphql.vhosts=*
@@ -73,6 +75,8 @@ services:
       - --gcmode=archive
       - --txlookuplimit=0
       - --fakepow
+      - --datadir=/root/.ethereum
+      - --datadir.ancient=/root/ancient
     logging:
       driver: "json-file"
       options:
@@ -110,7 +114,7 @@ services:
     image: kylemanna/bitcoind
     hostname: bitcoin
     volumes:
-      - /mnt/hdd3t/bitcoin:/bitcoin/.bitcoin # data in /bitcoin/.bitcoin
+      - /mnt/ssd2t/bitcoin:/bitcoin/.bitcoin # data in /bitcoin/.bitcoin
     container_name: bitcoin
     restart: unless-stopped
     ports: 
