@@ -4,6 +4,9 @@ neo4j etl for blockchains
 
 Current chains: BTC, ETH
 
+**WARN: Deprecated**
+will be rewriten in golang with different goal in project [chaingraph](https://github.com/C0MM4ND/chaingraph )
+
 ## Usage
 
 Install latest python (>=3.9)
