@@ -551,16 +551,15 @@ class EthereumETL:
         logger.warning(
             f'check missing blocks from {safe_height} to {local_height} with max {co} threads')
 
-        height = safe_height
+        start_height = safe_height
         # run multi thread in block level
         with ThreadPoolExecutor(max_workers=co) as executor:
-            while height < local_height:
-                next_height = height + co
-                if next_height > local_height:
-                    next_height = local_height
+            while start_height < local_height:
+                next_height = min(local_height, start_height + co) 
+                logger.warning(f'check missing blocks from {start_height} to {next_height}')
                 wait([executor.submit(self.check_task, height)
-                     for height in range(height, next_height)])
-                height = next_height
+                     for height in range(start_height, next_height)])
+                start_height = next_height
 
     def threadsafe_parse_block_tx(self, block, transaction):
         with self.driver.session(database=self.dbname) as session:
@@ -610,9 +609,12 @@ class EthereumETL:
 
             with ThreadPoolExecutor(blocks_co) as block_executor, ThreadPoolExecutor(blocks_co) as tx_executor:
                 # run multi thread in txs
-                for number in range(local_height + 1, latest):
+                while local_height + 1 < latest - blocks_co:
                     wait([block_executor.submit(
-                        self.sync_task(number, latest, tx_executor))])
+                        self.sync_task(number, latest, tx_executor))
+                          for number in range(local_height + 1, local_height + blocks_co + 1)
+                          ])
+                    local_height += blocks_co
 
                 logger.warning("entering daily sync mode")
                 while True:

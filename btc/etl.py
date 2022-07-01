@@ -453,6 +453,7 @@ class BitcoinETL:
         else:
             logger.warning("processing genesis block")
             self.parse_block(self.get_block_by_height(0), is_genesis=True)
+            local_height = 0
 
         if self.config.get("checker") is not None and local_height > 0:
             blocks_co = self.config["checker"].get("blocks", 100)
@@ -461,12 +462,17 @@ class BitcoinETL:
             logger.warning(
                 f'running on check missing mode, blocks thread {blocks_co}')
             safe_height = self.config["checker"].get(
-                "safe-height", local_height-blocks_co if local_height > blocks_co else 0)
-            end = top_block["height"]
-            logger.warning(f"checking from {safe_height} to {end}")
+                "safe-height", local_height - 2 * blocks_co if local_height > blocks_co else 0)
+
+            logger.warning(f"checking from {safe_height} to {local_height}")
+            start = safe_height + 1
             with ThreadPoolExecutor(blocks_co) as executor, ThreadPoolExecutor(blocks_co) as tx_executor:
-                wait([executor.submit(self.supplement_missing, self.get_block_by_height(
-                    height), tx_executor) for height in range(safe_height+1, end)])
+                while start < top_block["height"] - blocks_co:
+                    ending = min(start+blocks_co, top_block["height"])
+                    logger.warning(f"checking from {start} to {ending}")
+                    wait([executor.submit(self.supplement_missing, self.get_block_by_height(
+                        height), tx_executor) for height in range(start, ending)])
+                    start = ending
 
         if self.config.get("syncer") is not None and local_height < target:
             if self.config["syncer"].get("blocks"):
